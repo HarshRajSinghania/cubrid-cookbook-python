@@ -46,14 +46,14 @@ deps: ## Install the drivers, pytest and every golden-backed example's requireme
 		exit 1; \
 	fi; \
 	set --; for file in $$files; do set -- "$$@" -r "$$file"; done; \
-	echo "$(PIP) install pytest 'sqlalchemy-cubrid[pycubrid]' $$*"; \
+	echo "$(PIP) install pytest 'sqlalchemy-cubrid[pycubrid]' $$@"; \
 	$(PIP) install pytest 'sqlalchemy-cubrid[pycubrid]' "$$@"
 
 verify: check-coverage ## Verify example outputs against expected results (VERIFY_PATHS scopes the search roots, VERIFY_TIMEOUT limits each script)
 	@echo "Verifying example outputs in: $(VERIFY_PATHS) (timeout $(VERIFY_TIMEOUT)s per script)"
 	@set -o pipefail; \
 	roots=( $(VERIFY_PATHS) ); \
-	if [ "$${#roots[@]}" -eq 0 ]; then echo "ERROR: VERIFY_PATHS must name a directory" >&2; exit 1; fi; \
+	if [ "$${ #roots[@]}" -eq 0 ]; then echo "ERROR: VERIFY_PATHS must name a directory" >&2; exit 1; fi; \
 	for root in "$${roots[@]}"; do \
 		if [ ! -d "$$root" ]; then echo "ERROR: Verify root is not a directory: $$root" >&2; exit 1; fi; \
 	done; \
@@ -128,6 +128,7 @@ lint: ## Check Python lint and formatting
 	$(RUFF) format --check .
 
 test-offline: ## Run mocked/offline suites in separate processes (no database required)
+	$(PYTHON) -m unittest discover -s tests -p 'test_example_requirements.py' -v
 	$(PYTHON) -m unittest discover -s tests -p 'test_check_expected_coverage.py' -v
 	$(PYTHON) -m pytest quickstart/5min-fastapi/tests -q
 	$(PYTHON) -m pytest tests/test_ai_agent_offline.py -q
