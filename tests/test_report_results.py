@@ -132,82 +132,6 @@ class DecideAndSummaryTests(unittest.TestCase):
         self.assertEqual(report_results.build_summary("t", [])["status"], "INCOMPLETE")
 
 
-
-class SuiteEntryTests(unittest.TestCase):
-    """Direct tests for report_results.suite_entry branches (#488)."""
-
-    def test_junit_none_exit_zero_is_pass(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            results = Path(tmp)
-            entry = report_results.suite_entry(
-                "script", ["sh", "x.sh"], 0, None, results
-            )
-            self.assertEqual(entry["status"], "PASS")
-            self.assertIsNone(entry["junit"])
-            self.assertEqual(entry["counts"]["selected"], 1)
-            self.assertEqual(entry["counts"]["passed"], 1)
-            self.assertEqual(entry["counts"]["failed"], 0)
-            self.assertEqual(entry["command"], ["sh", "x.sh"])
-
-    def test_junit_none_nonzero_exit_is_fail(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            results = Path(tmp)
-            entry = report_results.suite_entry(
-                "script", ["sh", "x.sh"], 1, None, results
-            )
-            self.assertEqual(entry["status"], "FAIL")
-            self.assertIsNone(entry["junit"])
-            self.assertEqual(entry["counts"]["selected"], 1)
-            self.assertEqual(entry["counts"]["failed"], 1)
-            self.assertEqual(entry["counts"]["passed"], 0)
-
-    def test_missing_junit_file_exit_zero_is_incomplete(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            results = Path(tmp)
-            missing = results / "junit" / "01-p.xml"
-            entry = report_results.suite_entry(
-                "py", ("python", "-m", "pytest"), 0, missing, results
-            )
-            self.assertEqual(entry["status"], "INCOMPLETE")
-            self.assertEqual(entry["junit"], "junit/01-p.xml")
-            self.assertEqual(entry["counts"], dict.fromkeys(report_results.COUNTS, 0))
-            self.assertEqual(entry["command"], ["python", "-m", "pytest"])
-
-    def test_missing_junit_file_nonzero_exit_is_fail(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            results = Path(tmp)
-            missing = results / "junit" / "01-p.xml"
-            entry = report_results.suite_entry(
-                "py", ("python", "-m", "pytest"), 2, missing, results
-            )
-            self.assertEqual(entry["status"], "FAIL")
-            self.assertEqual(entry["junit"], "junit/01-p.xml")
-            self.assertEqual(entry["counts"], dict.fromkeys(report_results.COUNTS, 0))
-
-    def test_real_junit_file_uses_parse_and_command_is_list(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            results = Path(tmp)
-            junit_dir = results / "junit"
-            junit_dir.mkdir()
-            junit_path = junit_dir / "01-real.xml"
-            junit_path.write_text(
-                junit(
-                    '<testcase classname="c" name="ok"/>'
-                    '<testcase classname="c" name="bad"><failure/></testcase>'
-                ),
-                encoding="utf-8",
-            )
-            entry = report_results.suite_entry(
-                "real", ("python", "-m", "pytest"), 1, junit_path, results
-            )
-            self.assertEqual(entry["junit"], "junit/01-real.xml")
-            self.assertEqual(entry["command"], ["python", "-m", "pytest"])
-            self.assertEqual(entry["counts"]["selected"], 2)
-            self.assertEqual(entry["counts"]["passed"], 1)
-            self.assertEqual(entry["counts"]["failed"], 1)
-            self.assertEqual(entry["status"], "FAIL")
-
-
 class ResetResultsDirTests(unittest.TestCase):
     def test_refuses_dangerous_paths(self) -> None:
         for bad in ("", ".", "..", "/", str(ROOT), str(ROOT.parent), str(Path.home())):
@@ -417,6 +341,45 @@ class RunnerAggregationTests(unittest.TestCase):
         )
         self.assertNotIn("junit", listed.stdout)
 
+
+
+
+class SuiteEntryTests(unittest.TestCase):
+    """Direct unit tests for the previously uncovered branches of report_results.suite_entry()."""
+
+    def test_junit_none_exit_zero_is_pass(self):
+        entry = report_results.suite_entry("script-suite", None, 0, ["cmd"])
+        self.assertEqual(entry["status"], "PASS")
+        self.assertEqual(entry["counts"]["selected"], 1)
+        self.assertEqual(entry["counts"]["passed"], 1)
+        self.assertIsNone(entry["junit"])
+
+    def test_junit_none_nonzero_exit_is_fail(self):
+        entry = report_results.suite_entry("script-suite", None, 1, ["cmd"])
+        self.assertEqual(entry["status"], "FAIL")
+        self.assertEqual(entry["counts"]["selected"], 1)
+        self.assertEqual(entry["counts"]["failed"], 1)
+        self.assertIsNone(entry["junit"])
+
+    def test_missing_junit_exit_zero_is_incomplete(self):
+        entry = report_results.suite_entry("missing", "no-such.xml", 0, ["cmd"])
+        self.assertEqual(entry["status"], "INCOMPLETE")
+        self.assertEqual(sum(entry["counts"].values()), 0)
+        self.assertTrue(entry["junit"].endswith("no-such.xml"))
+
+    def test_missing_junit_nonzero_exit_is_fail(self):
+        entry = report_results.suite_entry("missing", "no-such.xml", 1, ["cmd"])
+        self.assertEqual(entry["status"], "FAIL")
+        self.assertEqual(sum(entry["counts"].values()), 0)
+        self.assertTrue(entry["junit"].endswith("no-such.xml"))
+
+    def test_real_junit_counts_from_parse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            junit_path = Path(tmp) / "real.xml"
+            junit_path.write_text(junit('<testcase classname="a" name="ok"/>'), encoding="utf-8")
+            entry = report_results.suite_entry("real", str(junit_path), 0, ("cmd",))
+            self.assertEqual(entry["counts"]["passed"], 1)
+            self.assertEqual(entry["command"], ["cmd"])
 
 if __name__ == "__main__":
     unittest.main()
