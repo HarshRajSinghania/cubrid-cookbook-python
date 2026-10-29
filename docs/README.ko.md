@@ -1,6 +1,6 @@
 <!-- CUBRID-LAB-ICON:START -->
 <p align="center">
-  <a href="https://github.com/cubrid-lab/brand"><img src="https://raw.githubusercontent.com/cubrid-lab/brand/94e2bf6b915d7ef6a1111e06376f693f70bf6c4e/dist/icons/cubrid-cookbook-python.svg" alt="cubrid-cookbook-python icon (CUBRID Lab brand repository)" width="120"></a>
+  <a href="https://github.com/cubrid-lab/brand"><img src="https://raw.githubusercontent.com/cubrid-lab/brand/e55990a6a0b2c3b0d133985951d41e42b62a8588/dist/icons/cubrid-cookbook-python.svg" alt="cubrid-cookbook-python icon (CUBRID Lab brand repository)" width="120"></a>
 </p>
 <!-- CUBRID-LAB-ICON:END -->
 
@@ -26,11 +26,17 @@
 
 ## 시작하기
 
+**CUBRID가 처음이라면 여기서 시작하세요:** [처음 만드는 CUBRID 데이터베이스 (Python)](ko/first-cubrid.md)는
+내 컴퓨터에 연습용 데이터베이스를 띄우고, Python에서 접속해 행을 저장하고 읽고,
+프레임워크보다 먼저 `commit`, `rollback`, 정리를 보여 줍니다.
+
 | 목표 | 바로 가기 | 소요 시간 |
 |------|-----------|-----------|
-| **5분 만에 시작** | [`quickstart/5min-fastapi/`](https://github.com/cubrid-lab/cubrid-cookbook-python/tree/main/quickstart/5min-fastapi) | 5분 |
-| **SQLAlchemy로 시작** | [`quickstart/5min-sqlalchemy/`](https://github.com/cubrid-lab/cubrid-cookbook-python/tree/main/quickstart/5min-sqlalchemy) | 5분 |
+| **CUBRID가 처음** | [`quickstart/first-cubrid/`](https://github.com/cubrid-lab/cubrid-cookbook-python/tree/main/quickstart/first-cubrid) | Docker와 Python 설치 후 약 15분 |
+| **5분 만에 시작** | [`quickstart/5min-fastapi/`](ko/quickstart-fastapi.md) | Docker 설치 후 약 5분 |
+| **SQLAlchemy로 시작** | [`quickstart/5min-sqlalchemy/`](ko/quickstart-sqlalchemy.md) | Docker와 Python 설치 후 약 5분 |
 | **Java에서 마이그레이션** | [`migration/java-to-python/`](https://github.com/cubrid-lab/cubrid-cookbook-python/tree/main/migration/java-to-python) | 30분 |
+| **CUBRIDdb 드라이버에서 pycubrid로 이전** | [`migration/cubriddb-to-pycubrid/`](ko/migration-cubriddb-to-pycubrid.md) | 20분 |
 | **프로덕션 API 구축** | [`templates/api-service-fastapi/`](https://github.com/cubrid-lab/cubrid-cookbook-python/tree/main/templates/api-service-fastapi) | 15분 |
 
 ---
@@ -39,19 +45,20 @@
 
 ### 퀵스타트
 
-Docker로 CUBRID + FastAPI 앱을 5분 안에 띄웁니다.
+Docker를 설치하고 이미지를 내려받은 뒤라면, Docker로 CUBRID + FastAPI 앱을 5분 정도면 띄웁니다.
 
 ```bash
-cd quickstart/5min-fastapi
-docker compose up -d --wait cubrid
-pip install -r requirements.txt
-uvicorn app:app --reload
+git clone https://github.com/cubrid-lab/cubrid-cookbook-python.git
+cd cubrid-cookbook-python/quickstart/5min-fastapi
+docker compose up -d --build --wait
+curl -sS -X POST localhost:8000/items -H 'Content-Type: application/json' -d '{"val": "hello from the quickstart"}'
+# {"val":"hello from the quickstart","id":1}
 # http://localhost:8000/docs 접속
 ```
 
-호스트에서 실행한 API는 기본적으로 `localhost`에 연결합니다 (`CUBRID_HOST`로 변경 가능).
-API와 데이터베이스를 모두 Docker에서 실행하려면 같은 디렉터리에서
-`docker compose up -d --build`를 사용하세요. Compose는 API에 `CUBRID_HOST=cubrid`를 설정합니다.
+[FastAPI 빠른 시작](ko/quickstart-fastapi.md)은 단계마다 설명하고, API를 내 컴퓨터에서
+Uvicorn으로 실행하는 방법과 멈추고 정리하는 방법도 보여 줍니다.
+[SQLAlchemy 빠른 시작](ko/quickstart-sqlalchemy.md)은 Core와 ORM 스크립트 하나로 같은 과정을 안내합니다.
 
 <a href="demo-fastapi.gif"><img src="demo-fastapi.png" alt="FastAPI 퀵스타트: Swagger UI에서 POST /items로 만든 항목을 GET /items가 CUBRID에서 반환, 녹화의 마지막 장면" width="100%"/></a>
 
@@ -62,6 +69,11 @@ API와 데이터베이스를 모두 Docker에서 실행하려면 같은 디렉�
 Java JDBC → Python 마이그레이션을 실제 코드 나란히 비교로 제공합니다. 연결, CRUD(DB-API와 ORM), 트랜잭션, 배치 작업을 다룹니다.
 
 > CUBRID의 JDBC 드라이버와 Python 드라이버는 동일한 CAS 프로토콜을 사용합니다 — 데이터 마이그레이션이 필요 없습니다.
+
+이미 Python에서 공식 `CUBRIDdb` C 확장 드라이버를 쓰고 있다면, 별도의
+[CUBRIDdb → pycubrid 가이드](ko/migration-cubriddb-to-pycubrid.md)가 드라이버 간 이전을
+다룹니다. 연결 인자, autocommit 기본값, 스레드 공유, 파라미터, 오류 속성, LOB를 실행 가능한
+pycubrid 레시피 네 개로 보여 주며, 그대로 바꿔 끼우면 된다는(drop-in) 주장은 하지 않습니다.
 
 ### 프로덕션 템플릿
 
@@ -122,7 +134,7 @@ Java JDBC → Python 마이그레이션을 실제 코드 나란히 비교로 제
 
 ```
 pycubrid (DB-API 2.0 드라이버)
-├── 직접 사용 ─────── fundamentals/pycubrid (connect, crud, transactions는 이쪽으로 리다이렉트)
+├── 직접 사용 ─────── quickstart/first-cubrid (여기서 시작), fundamentals/pycubrid (connect, crud, transactions는 이쪽으로 리다이렉트)
 ├── SQLAlchemy ────── fundamentals/orm-basics, sqlalchemy, quickstart/5min-sqlalchemy
 ├── FastAPI ───────── quickstart/5min-fastapi, templates/api-service-fastapi
 ├── Flask ─────────── templates/flask
@@ -156,21 +168,31 @@ from sqlalchemy import create_engine
 engine = create_engine("cubrid+pycubrid://dba@localhost:33000/testdb")
 ```
 
-데이터베이스 기동:
+데이터베이스 시작·중지·삭제(루트 `docker-compose.yml`의 서비스 `cubrid`):
 
 ```bash
-docker compose up -d
+make docker-up      # CUBRID 시작(CUBRID_VERSION=11.4로 다른 이미지 선택), testdb가 응답할 때까지 대기
+make docker-down    # 중지; 데이터베이스는 Docker 볼륨에 남음
+make docker-clean   # 파괴적: 컨테이너와 볼륨을 데이터베이스까지 삭제
 ```
+
+체크아웃 검증의 표준 순서는 `make test`(오프라인, 결과는 `test-results/test/`) 다음 `make verify`(전체 라이브 검증, [CONTRIBUTING.md](https://github.com/cubrid-lab/cubrid-cookbook-python/blob/main/CONTRIBUTING.md#live-verification) 참조)입니다. 개별 `verify-*` 레인은 디버깅용이며 `PARTIAL`을 출력하고, [고급 디버깅 레인](https://github.com/cubrid-lab/cubrid-cookbook-python/blob/main/CONTRIBUTING.md#advanced-debugging-lanes)에 정리되어 있습니다.
+
+`make up`과 `make down`은 `make docker-up`과 `make docker-down`의 별칭으로 남아 있습니다.
+브로커는 `127.0.0.1`에서만 대기합니다. `CUBRID_TEST_PORT`로 다른 호스트 포트에 공개할 수
+있지만 예제는 `33000`에 연결하므로, 예제를 실행할 때는 설정하지 마세요.
 
 ## 프로젝트 구조
 
 ```
 cubrid-cookbook-python/
 ├── quickstart/
+│   ├── first-cubrid/          # CUBRID가 처음: pycubrid로 따라 하는 첫 튜토리얼
 │   ├── 5min-fastapi/          # 5분 만에 Docker + FastAPI
 │   └── 5min-sqlalchemy/       # 5분 만에 Docker + SQLAlchemy
 ├── migration/
-│   └── java-to-python/        # JDBC → pycubrid/SQLAlchemy 마이그레이션
+│   ├── java-to-python/        # JDBC → pycubrid/SQLAlchemy 마이그레이션
+│   └── cubriddb-to-pycubrid/  # 공식 CUBRIDdb 드라이버 → pycubrid
 ├── templates/
 │   ├── api-service-fastapi/   # 프로덕션 REST API (레시피 12개)
 │   ├── flask/                 # Flask + Flask-SQLAlchemy (레시피 11개)

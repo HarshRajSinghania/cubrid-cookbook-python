@@ -18,7 +18,7 @@
 4. Prefer examples that can be copied by users with minimal adaptation.
 
 ## Validation
-- `make up`
+- `make docker-up`
 - Run the relevant example commands for the changed language.
 - `make status`
-- `make down`
+- `make docker-down` (keeps the data; `make docker-clean` deletes it)

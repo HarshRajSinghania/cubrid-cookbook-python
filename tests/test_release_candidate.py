@@ -764,7 +764,7 @@ class CandidateWorkflowTests(unittest.TestCase):
         download = step(VERIFY, "Download candidate artifact")
         self.assertIn("if: inputs.mode == 'candidate' && inputs.candidate_artifact != ''", download)
         self.assertIn(
-            "uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1",
+            "uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2",
             download,
         )
         self.assertIn("name: ${{ inputs.candidate_artifact }}", download)
@@ -847,7 +847,7 @@ class CandidateWorkflowTests(unittest.TestCase):
 
     def test_no_new_trigger_schedule_or_permission(self) -> None:
         triggers = WORKFLOW[WORKFLOW.index("\non:") : WORKFLOW.index("\nconcurrency:")]
-        self.assertEqual(triggers.count("cron:"), 1)
+        self.assertEqual(triggers.count("cron:"), 2)  # daily + weekly (#480)
         self.assertNotIn("pull_request", triggers.split("workflow_call:")[0].split("\n  push:")[0])
         self.assertNotIn("id-token", WORKFLOW)
         self.assertNotIn("secrets.", WORKFLOW)

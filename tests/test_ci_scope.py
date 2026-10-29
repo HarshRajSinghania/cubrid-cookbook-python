@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import io
+import json
 import os
 import re
 import subprocess
@@ -43,6 +45,11 @@ CQRS = ci_scope.CQRS_ROOT
 DRIVER_MAIN = (ROOT / ".github/workflows/driver-main.yml").read_text(encoding="utf-8")
 # Jobs that must never feed ci-gate (#239): advisory lanes only.
 ADVISORY_JOBS = {"driver-main-advisory"}
+
+
+DAILY_SMOKE_CRON = "0 0 * * 0,2-6"
+WEEKLY_SMOKE_CRON = "0 0 * * 1"
+RELEASE_SMOKE_CELLS = {("11.2", "3.12"), ("11.4", "3.12"), ("11.4", "3.11")}
 
 
 def scope(*paths: str, event: str = "pull_request") -> dict[str, object]:
@@ -125,19 +132,60 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(result["python"], ["3.11", "3.14"])
         self.assertEqual(result["verify_paths"], "fundamentals/sqlalchemy")
 
-    def test_ai_agent_change_runs_smoke_with_full_verify(self) -> None:
-        for path in ("templates/ai-agent/03_rag_metadata.py", "tests/test_ai_agent.py"):
+    def test_live_lane_paths_run_their_focused_lane_with_full_verify(self) -> None:
+        # The AI agent (#426), performance (#428) and FastAPI quickstart (#425)
+        # live suites run as focused make verify-<lane> lanes in the 11.4 smoke lane.
+        cases = {
+            "templates/ai-agent/03_rag_metadata.py": "ai-agent",
+            "templates/ai-agent/tests/test_live.py": "ai-agent",
+            "templates/ai-agent/tests/test_offline.py": "ai-agent",
+            "performance/bulk-insert/benchmark.py": "performance",
+            "performance/tests/test_benchmarks.py": "performance",
+            "quickstart/5min-fastapi/app.py": "quickstart",
+            "quickstart/5min-fastapi/tests/test_live.py": "quickstart",
+        }
+        for path, lane in cases.items():
             with self.subTest(path=path):
                 result = scope(path)
                 self.assertEqual(selected(result), {"smoke_114"})
                 self.assertEqual(result["verify_paths"], ".")
+                self.assertEqual(result["smoke_lanes"], lane)
+
+    def test_live_lane_path_beside_a_golden_root_keeps_full_verify(self) -> None:
+        # Copilot finding on #432: a golden root changed alongside must not narrow
+        # the golden run to that root.
+        for path, lane in (
+            ("performance/bulk-insert/benchmark.py", "performance"),
+            ("quickstart/5min-fastapi/app.py", "quickstart"),
+            ("templates/ai-agent/01_agent_state.py", "ai-agent"),
+        ):
+            with self.subTest(path=path):
+                result = scope(path, "migration/java-to-python/01_connection.py")
+                self.assertEqual(selected(result), {"smoke_114"})
+                self.assertEqual(result["verify_paths"], ".")
+                self.assertEqual(result["smoke_lanes"], lane)
+        result = scope(
+            "quickstart/5min-fastapi/app.py",
+            "performance/fetch-optimization/benchmark.py",
+            "templates/ai-agent/04_agent_loop.py",
+        )
+        self.assertEqual(result["smoke_lanes"], "quickstart performance ai-agent")
+
+    def test_golden_root_alone_runs_no_focused_lane(self) -> None:
+        result = scope("migration/java-to-python/01_connection.py")
+        self.assertEqual(result["verify_paths"], "migration/java-to-python")
+        self.assertEqual(result["smoke_lanes"], "")
+
+    def test_live_lane_markdown_stays_docs_only(self) -> None:
+        for path in ("performance/README.md", "quickstart/5min-fastapi/README.md"):
+            with self.subTest(path=path):
+                result = scope(path)
+                self.assertEqual(selected(result), set())
+                self.assertEqual(result["smoke_lanes"], "")
 
     def test_example_files_without_live_consumer_stay_offline(self) -> None:
-        result = scope(
-            "performance/bulk-insert/bench.py",
-            "quickstart/5min-fastapi/main.py",
-            "fundamentals/parameterized-queries/04_parameterized.py",
-        )
+        self.assertEqual(ci_scope.NO_LIVE_CONSUMER, ("fundamentals/parameterized-queries/*",))
+        result = scope("fundamentals/parameterized-queries/04_parameterized.py")
         self.assertEqual(selected(result), set())
 
     def test_example_tree_file_outside_golden_roots_fails_closed(self) -> None:
@@ -146,6 +194,7 @@ class ClassifierTests(unittest.TestCase):
                 result = scope(path)
                 self.assertEqual(selected(result), {"smoke_114"})
                 self.assertEqual(result["verify_paths"], ".")
+                self.assertEqual(result["smoke_lanes"], "quickstart performance ai-agent")
 
     def test_grouped_dependabot_recipe_bump_selects_only_touched_suites(self) -> None:
         flask = [f"templates/flask/{n:02d}-x/requirements.txt" for n in range(1, 12)]
@@ -163,9 +212,16 @@ class ClassifierTests(unittest.TestCase):
                 result = scope(path)
                 self.assertEqual(selected(result), {"smoke_114", "smoke_112"})
                 self.assertEqual(result["verify_paths"], ".")
+                self.assertEqual(result["smoke_lanes"], "quickstart performance ai-agent")
 
     def test_shared_live_infrastructure_fans_out(self) -> None:
-        for path in ("Makefile", "scripts/normalize_output.sh", "docker-compose.yml"):
+        for path in (
+            "Makefile",
+            "scripts/normalize_output.sh",
+            "docker-compose.yml",
+            "scripts/live_gate.py",
+            "scripts/example_requirements.py",
+        ):
             with self.subTest(path=path):
                 result = scope(path)
                 self.assertEqual(result["tier"], "pr")
@@ -173,6 +229,7 @@ class ClassifierTests(unittest.TestCase):
                 self.assertEqual(result["cqrs_cubrid"], ["11.2", "11.4"])
                 self.assertEqual(result["python"], ["3.11", "3.14"])
                 self.assertEqual(result["verify_paths"], ".")
+                self.assertEqual(result["smoke_lanes"], "quickstart performance ai-agent")
 
     def test_ci_policy_change_runs_every_lane(self) -> None:
         for path in ci_scope.SELF[:1] + (
@@ -205,14 +262,22 @@ class ClassifierTests(unittest.TestCase):
         self.assertEqual(scope("README.md", event="merge_group")["tier"], "full")
 
     def test_broad_events_keep_python_and_cqrs_evidence(self) -> None:
+        # #480: a push to main runs pinned CQRS on 11.4 only; the weekly schedule
+        # and manual runs keep 11.2 + 11.4.
+        cqrs = {
+            "push": ["11.4"],
+            "schedule": ["11.2", "11.4"],
+            "workflow_dispatch": ["11.2", "11.4"],
+        }
         for event in ("push", "schedule", "workflow_dispatch"):
             with self.subTest(event=event):
                 result = scope(event=event)
                 self.assertEqual(result["tier"], "main")
                 self.assertEqual(result["python"], ["3.11", "3.12", "3.13", "3.14"])
-                self.assertEqual(result["cqrs_cubrid"], ["11.2", "11.4"])
+                self.assertEqual(result["cqrs_cubrid"], cqrs[event])
                 floors = {"floors"} if event != "push" else set()
                 self.assertEqual(selected(result), {"compat", "cqrs"} | floors)
+                self.assertEqual(result["smoke_lanes"], "")
 
     def test_render_is_github_output_lines(self) -> None:
         text = ci_scope.render(scope("templates/django/app/views.py"))
@@ -506,9 +571,23 @@ class GateTests(unittest.TestCase):
 class WorkflowWiringTests(unittest.TestCase):
     def test_root_fastapi_app_smoke_test_is_wired_with_its_own_requirements(self) -> None:
         # The root app has its own requirements (pydantic-settings is not in the
-        # shared lists), so both live lanes must install them and run its suite.
-        self.assertIn("templates/api-service-fastapi/tests", SMOKE)
-        self.assertIn("-r templates/api-service-fastapi/requirements.txt", SMOKE)
+        # shared lists). The broad smoke installs them with make deps and runs its
+        # suite through the full make verify (live_gate web lane).
+        import example_requirements
+        import live_gate
+
+        self.assertIn("run: make deps\n", SMOKE)
+        self.assertIn(
+            "templates/api-service-fastapi/requirements.txt",
+            [
+                p.relative_to(ROOT).as_posix()
+                for p in example_requirements.requirement_files(ROOT, every=True)
+            ],
+        )
+        self.assertIn(
+            "templates/api-service-fastapi/tests",
+            [suite["glob"] for suite in live_gate.MANIFEST["web"]["suites"]],
+        )
         # ci.yml installs each selected suite root's own requirements (#227).
         self.assertIn("templates/api-service-fastapi", ci_scope.REPRESENTATIVE_WEB_SUITES)
         self.assertTrue(
@@ -556,21 +635,82 @@ class WorkflowWiringTests(unittest.TestCase):
                 self.assertIn(f'cubrid-version: "{version}"', body)
                 self.assertIn("persist-credentials: false", body)
 
-    def test_pr_smoke_action_runs_goldens_agents_and_mcp(self) -> None:
+    def test_pr_smoke_action_runs_goldens_selected_lanes_and_mcp(self) -> None:
         action = (ROOT / ".github/actions/pr-smoke/action.yml").read_text(encoding="utf-8")
-        self.assertIn('make verify VERIFY_PATHS="$VERIFY_PATHS"', action)
+        # Scoped goldens by name: make verify with VERIFY_PATHS is only a partial check.
+        self.assertIn('make verify-goldens VERIFY_PATHS="$VERIFY_PATHS"', action)
         self.assertIn("VERIFY_PATHS: ${{ inputs.verify-paths }}", action)
-        self.assertIn("tests/test_ai_agent.py", action)
+        self.assertNotIn("make verify VERIFY_PATHS", action)
+        self.assertNotIn("-m pytest", action)  # suites run only through make verify-*
+        for lane in ci_scope.SMOKE_LANE_ORDER:
+            self.assertIn(f"make verify-{lane}", action)
+        self.assertIn("LIVE_LANES: ${{ inputs.live-lanes }}", action)
+        # verify-ai-agent runs twice on a dedicated database, both runs kept (#426).
+        self.assertEqual(action.count("make verify-ai-agent"), 2)
+        self.assertIn(".live-evidence/ai-agent-run-1", action)
+        self.assertIn(".live-evidence/ai-agent-run-2", action)
+        self.assertIn("CUBRID_TEST_URL: cubrid+pycubrid://dba@localhost:33100/testdb", action)
+        self.assertIn("make deps", action)
         self.assertIn("python scripts/mcp_smoke.py", action)
         self.assertIn("release_smoke.py freeze", action)
         self.assertNotIn("uses:", action)  # no unpinned/unmanaged actions
+
+    def test_pr_smoke_jobs_pass_lanes_and_upload_evidence_once(self) -> None:
+        jobs = parse_jobs(CI)
+        for job, version in (("smoke-114", "11.4"), ("smoke-112", "11.2")):
+            body = "\n".join(jobs[job])
+            with self.subTest(job=job):
+                self.assertIn("live-lanes: ${{ needs.classify.outputs.smoke_lanes }}", body)
+                self.assertEqual(body.count("actions/upload-artifact@"), 1)
+                upload = body[body.index("- name: Upload live evidence") :]
+                self.assertIn("if: always()", upload)
+                self.assertIn("continue-on-error: true", upload)
+                # test-results/ (#462) plus the .live-evidence/ compatibility layout.
+                self.assertIn(
+                    "path: |\n            test-results/\n            .live-evidence/\n", upload
+                )
+                self.assertIn("include-hidden-files: true", upload)
+                self.assertIn(f"name: live-evidence-pr-cubrid-{version}", upload)
+                self.assertIn("retention-days: 14", upload)
+        self.assertEqual(CI.count("actions/upload-artifact@"), 2)
+        # smoke-test.yml, which sibling repositories call, keeps its own upload.
+        self.assertEqual(SMOKE.count("path: .live-evidence/"), 1)
+
+    def test_pr_smoke_jobs_publish_the_verify_summary_and_cubrid_logs(self) -> None:
+        jobs = parse_jobs(CI)
+        for job in ("smoke-114", "smoke-112"):
+            body = "\n".join(jobs[job])
+            with self.subTest(job=job):
+                action = body.index("uses: ./.github/actions/pr-smoke")
+                logs = body.index("- name: Collect CUBRID logs")
+                summary = body.index("- name: Publish the live verification summary")
+                upload = body.index("- name: Upload live evidence")
+                self.assertLess(action, logs)
+                self.assertLess(logs, summary)
+                self.assertLess(summary, upload)
+                collect = body[logs:summary]
+                self.assertIn("if: failure()", collect)
+                self.assertIn("continue-on-error: true", collect)
+                self.assertIn("for name in cubrid cubrid-live; do", collect)
+                self.assertIn("test-results/cubrid-logs/", collect)
+                publish = body[summary:upload]
+                self.assertIn("if: always()", publish)
+                self.assertIn(
+                    'cat test-results/verify/summary.md >> "$GITHUB_STEP_SUMMARY"', publish
+                )
+                self.assertNotIn("uses:", body[logs:upload])
+                # No new permission: the smoke jobs stay read-only.
+                self.assertIn("    permissions:\n      contents: read\n    steps:", body)
 
     def test_smoke_workflow_dropped_only_the_pull_request_trigger(self) -> None:
         triggers = "\n" + SMOKE.split("\non:\n", 1)[1].split("\n# Release verifications", 1)[0]
         self.assertNotIn("  pull_request", triggers)
         for trigger in ("push:", "schedule:", "repository_dispatch:", "workflow_dispatch:"):
             self.assertIn(f"\n  {trigger}", triggers)
-        self.assertIn('cron: "0 0 * * *"', triggers)
+        # #480: one daily and one weekly cron, never both on the same slot.
+        self.assertEqual(
+            re.findall(r'cron: "([^"]+)"', triggers), [DAILY_SMOKE_CRON, WEEKLY_SMOKE_CRON]
+        )
         call = triggers.split("  workflow_call:\n", 1)[1]
         for name in ("package", "version"):
             block = call.split(f"      {name}:\n", 1)[1].split("\n      ", 1)[0]
@@ -587,6 +727,103 @@ class WorkflowWiringTests(unittest.TestCase):
         triggers = "\n" + CI.split("\non:\n", 1)[1].split("\nconcurrency:", 1)[0]
         for trigger in ("pull_request:", "push:", "schedule:", "workflow_dispatch:"):
             self.assertIn(f"\n  {trigger}", triggers)
+
+
+def evaluate(expression: str, event: str, schedule: str = "", package: str | None = None):
+    """Evaluate a smoke-test.yml matrix expression for one event (#480).
+
+    Only the operators these expressions use: ``&&``/``||`` return an operand,
+    like Python's and/or; ``!`` is ``not``; ``fromJSON`` parses JSON.
+    """
+    body = " ".join(expression.split())
+    body = body.removeprefix("${{").removesuffix("}}")
+    names = {
+        "github.event_name": "event_name",
+        "github.event.schedule": "schedule",
+        "inputs.package": "package",
+        "fromJSON": "fromJSON",
+    }
+    python = body.replace("&&", " and ").replace("||", " or ")
+    python = re.sub(r"!(?!=)", " not ", python)
+    for name, alias in names.items():
+        python = python.replace(name, alias)
+    leftover = re.findall(r"[a-z]+\.[a-z_.]+", python)
+    if leftover:
+        raise AssertionError(f"unexpected context in matrix expression: {leftover}")
+    scope_vars = {
+        "event_name": event,
+        "schedule": schedule,
+        "package": package,
+        "fromJSON": json.loads,
+    }
+    return eval(python, {"__builtins__": {}}, scope_vars)  # noqa: S307 - repository text
+
+
+class SmokeEventMatrixTests(unittest.TestCase):
+    """smoke-test.yml selects its CUBRID cells per event (#480)."""
+
+    def strategy(self) -> tuple[str, str, list[str]]:
+        verify = SMOKE[SMOKE.index("\n  verify:") : SMOKE.index("\n  report:")]
+        strategy = verify[verify.index("    strategy:") : verify.index("    steps:")]
+        cubrid = strategy.split("        cubrid: >-\n", 1)[1].split("\n        python:", 1)[0]
+        include = strategy.split("        include: >-\n", 1)[1]
+        python = re.search(r"(?m)^        python: (\[.*\])$", strategy).group(1)
+        return cubrid, include, json.loads(python)
+
+    def cells(self, event: str, schedule: str = "", package: str | None = None) -> set:
+        cubrid, include, python = self.strategy()
+        cells = {
+            (version, py) for version in evaluate(cubrid, event, schedule, package) for py in python
+        }
+        for extra in evaluate(include, event, schedule, package):
+            cells.add((extra["cubrid"], extra["python"]))
+        return cells
+
+    def test_each_event_selects_its_documented_cells(self) -> None:
+        only_114 = {("11.4", "3.12")}
+        both = {("11.2", "3.12"), ("11.4", "3.12")}
+        cases = (
+            ("push to main", ("push",), only_114),
+            ("daily schedule", ("schedule", DAILY_SMOKE_CRON), only_114),
+            ("weekly schedule", ("schedule", WEEKLY_SMOKE_CRON), both),
+            # An unknown cron string fails wide, never narrower.
+            ("other cron", ("schedule", "0 0 * * *"), both),
+            ("manual full smoke", ("workflow_dispatch", "", "latest"), both),
+            ("manual release", ("workflow_dispatch", "", "pycubrid"), RELEASE_SMOKE_CELLS),
+            ("repository_dispatch", ("repository_dispatch",), RELEASE_SMOKE_CELLS),
+            # Under workflow_call github.event_name is the CALLER's event.
+            ("call from push", ("push", "", "pycubrid"), RELEASE_SMOKE_CELLS),
+            (
+                "call from daily cron",
+                ("schedule", DAILY_SMOKE_CRON, "pycubrid"),
+                RELEASE_SMOKE_CELLS,
+            ),
+            ("call from release", ("release", "", "sqlalchemy-cubrid"), RELEASE_SMOKE_CELLS),
+            (
+                "call from dispatch",
+                ("workflow_dispatch", "", "cubrid-mcp-server"),
+                RELEASE_SMOKE_CELLS,
+            ),
+        )
+        for name, args, expected in cases:
+            with self.subTest(case=name):
+                self.assertEqual(self.cells(*args), expected)
+
+    def test_release_cells_match_release_smoke(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "release_smoke_480", ROOT / "scripts/release_smoke.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(set(module.RELEASE_CELLS), RELEASE_SMOKE_CELLS)
+
+    def test_weekly_smoke_shares_the_weekly_ci_day(self) -> None:
+        ci_cron = re.search(r'cron: "([^"]+)"', CI).group(1).split()
+        weekly = WEEKLY_SMOKE_CRON.split()
+        self.assertEqual(weekly[2:], ci_cron[2:])  # same day of month/month/weekday
+        daily_days = DAILY_SMOKE_CRON.split()[4]
+        self.assertEqual(daily_days, "0,2-6")
+        self.assertNotIn(weekly[4], ("0", "2", "3", "4", "5", "6"))
 
 
 class DriverMainAdvisoryTests(unittest.TestCase):

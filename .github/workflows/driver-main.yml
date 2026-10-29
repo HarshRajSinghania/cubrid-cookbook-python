@@ -105,7 +105,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Install recipe requirements with both drivers from main
@@ -173,7 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '### Recipes run against driver main\n\n%s\n' "$RECIPES" >> "$GITHUB_STEP_SUMMARY"
-          make verify VERIFY_PATHS="$RECIPES"
+          make verify-goldens VERIFY_PATHS="$RECIPES"
 
       # Recorded even when an earlier step fails; with job-level
       # continue-on-error the report job cannot rely on needs.<job>.result.
@@ -243,7 +243,7 @@ jobs:
             if [ -n "$issue" ]; then
               gh issue comment "$issue" --body "$body"
             else
-              gh issue create --title "$ISSUE_TITLE" --label ci --label "priority: medium" --label "size: S" --body "$body"
+              gh issue create --title "$ISSUE_TITLE" --label ci --label "priority: medium" --label "size: S" --label "status: needs triage" --body "$body"
             fi
             printf '## Recipes failed against driver main (advisory)\n\n%s\n' "$table" >> "$GITHUB_STEP_SUMMARY"
           elif [ -n "$issue" ]; then

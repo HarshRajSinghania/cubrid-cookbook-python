@@ -15,7 +15,7 @@ Connection used by all recipes:
 From repository root:
 
 ```bash
-make up
+make docker-up
 ```
 
 ## Install

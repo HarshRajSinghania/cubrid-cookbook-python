@@ -4,17 +4,76 @@
 
 세 가지 경로 — 5분 첫 쿼리부터 자연어 MCP 세션까지. 모든 것은 PyPI에서 설치됩니다 — git 체크아웃도, C 컴파일러도 필요 없습니다.
 
+CUBRID가 처음이라면 초보자 튜토리얼 [처음 만드는 CUBRID 데이터베이스](first-cubrid.md)부터 시작하세요. 실습 환경과 연결 설정을 설명하고 한 단계씩 진행합니다. 이 페이지는 경로를 고르고, 전체 체크아웃을 검증하고, 예전 실습 환경을 복구하기 위한 것입니다.
+
 ## 0. CUBRID 시작 (모든 경로 공통)
 
 ```bash
-docker compose up -d        # localhost:33000의 CUBRID 11.2, 데이터베이스 testdb
+make docker-up              # 127.0.0.1:33000의 CUBRID 11.2, 데이터베이스 testdb; 응답할 때까지 대기
 ```
 
-첫 시작 시 준비까지 최대 1분 걸립니다:
+`make docker-up`은 루트 `docker-compose.yml`의 서비스 `cubrid`에 대해 `docker compose up -d`를
+실행한 뒤, 컨테이너 안에서 `testdb`가 쿼리에 응답할 때까지(최대 120초) 기다립니다. `make` 없이
+쓰려면 `docker compose up -d`를 실행하고 직접 준비 상태를 확인하세요. 첫 시작 시 최대 1분 걸립니다.
 
 ```bash
-docker exec cubrid-cookbook bash -lc "csql -u dba testdb -c 'SELECT 1;'"
+docker compose exec cubrid csql -u dba testdb -c 'SELECT 1'
 ```
+
+Docker 수명 주기 명령은 세 가지입니다.
+
+| 명령 | 하는 일 | 데이터베이스 데이터 |
+|---|---|---|
+| `make docker-up` | 실습 환경 시작(`CUBRID_VERSION=11.4`로 다른 이미지 선택) | 지난 실행에서 유지 |
+| `make docker-down` | 컨테이너와 네트워크를 멈추고 제거 | 이름 있는 볼륨에 **유지** |
+| `make docker-clean` | 컨테이너, 네트워크, 볼륨 제거 | **삭제** |
+
+`make up`과 `make down`은 `make docker-up`과 `make docker-down`의 별칭입니다.
+브로커는 `127.0.0.1`에서만 대기합니다. `CUBRID_TEST_PORT=<포트>`로 다른 호스트 포트에 공개할 수
+있지만(예: 별도 `COMPOSE_PROJECT_NAME`의 두 번째 실습 환경), 예제와 `make verify`는 실습 환경이
+`33000`에 있다고 가정합니다.
+
+### 2026년 10월 실습 환경 변경 전에 만든 실습 환경
+
+`docker-compose.yml`은 데이터베이스를 이름 있는 볼륨에 보관하고 호스트 `localhost`로
+등록하므로(`CUBRID_DB_HOST`), 어떤 새 컨테이너든 그 데이터베이스를 엽니다(#385, #436).
+이전 파일로 시작한 실습 환경은 새 파일이 컨테이너를 처음 다시 만들 때 열리지 않습니다.
+CUBRID가 이전 컨테이너의 호스트 이름(`cubrid-cookbook` 또는 임의의 컨테이너 ID)을 기록해
+두었기 때문입니다(`-353 Failed to connect to database server`). 데이터는 그대로 남아 있으니,
+저장소 폴더에서 아래와 같이 복구하세요. **데이터를 지우는 `make docker-clean`이나
+`docker compose down -v`는 실행하지 마세요.** 필요한 데이터가 있다면 먼저 따로 복사해 두세요.
+
+데이터베이스가 이미 이름 있는 볼륨에 있다면(모든 CUBRID 11.2 실습 환경, 또는 #385 이후에
+시작한 11.4 실습 환경), 데이터베이스가 `localhost`를 가리키게 하고 다시 시작합니다. 11.4
+실습 환경이면 첫 명령에 `CUBRID_VERSION=11.4`를 붙이세요.
+
+```bash
+docker compose up -d
+docker compose exec -T -u cubrid cubrid sh -c 'sed -i -E "s/^(testdb[[:space:]]+[^[:space:]]+[[:space:]]+)[^[:space:]]+/\1localhost/" "$CUBRID_DATABASES/databases.txt"'
+docker compose restart cubrid
+python3 scripts/wait_for_cubrid.py
+```
+
+`CUBRID_VERSION=11.4`로 #385 이전에 시작한 실습 환경이라면, 데이터베이스가 이름 없는 볼륨에
+있습니다. 저장소를 업데이트하기 전에 그 볼륨을 기록하고 실습 환경을 멈추세요.
+
+```bash
+OLD=$(docker inspect "$(docker compose ps -aq cubrid)" --format '{{range .Mounts}}{{if eq .Destination "/home/cubrid/CUBRID/databases"}}{{.Name}}{{end}}{{end}}')
+docker compose stop
+```
+
+그다음 저장소를 업데이트하고(`git pull`), 데이터베이스를 새 이름 있는 볼륨에 복사한 뒤
+호스트 이름을 고치고 실습 환경을 시작합니다.
+
+```bash
+CUBRID_VERSION=11.4 docker compose create
+NEW=$(docker inspect "$(docker compose ps -aq cubrid)" --format '{{range .Mounts}}{{if eq .Destination "/home/cubrid/CUBRID/databases"}}{{.Name}}{{end}}{{end}}')
+docker run --rm -v "$OLD":/from:ro -v "$NEW":/to --entrypoint sh cubrid/cubrid:11.4 -c 'cp -a /from/. /to/ && sed -i -E "s/^(testdb[[:space:]]+[^[:space:]]+[[:space:]]+)[^[:space:]]+/\1localhost/" /to/databases.txt && chown cubrid:cubrid /to/databases.txt'
+CUBRID_VERSION=11.4 docker compose up -d
+python3 scripts/wait_for_cubrid.py
+```
+
+데이터가 돌아온 것을 확인한 뒤 `docker volume rm "$OLD"`로 이전 사본을 지우세요.
 
 ## 1. 5분 만에 첫 쿼리 (pycubrid)
 
@@ -58,12 +117,25 @@ Python 3.11 이상의 가상 환경을 사용하세요:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate   # Python 3.11 이상
-make up                       # CUBRID를 시작하고 준비될 때까지 대기
-make deps                     # 드라이버, pytest, 골든 기반 모든 예제의 requirements
-make verify                   # 골든 기반 모든 예제를 로컬 CUBRID에 대해 실행
+make deps                     # 드라이버, pytest, 모든 예제의 requirements
+make test                     # 1. 단위·모의 테스트: 데이터베이스와 Docker 불필요
+make docker-up                # CUBRID를 시작하고 준비될 때까지 대기
+make verify                   # 2. 전체 라이브 검증 (데이터베이스 두 개가 더 필요, 아래 참조)
 ```
 
-`make deps`는 한 번의 pip 호출로 모두 설치하며 `PIP_CONSTRAINT`를 따릅니다. `make verify`는 예제 요구 패키지가 빠져 있으면 "run `make deps` first"를 출력하고 바로 멈추며, 스크립트마다 `VERIFY_TIMEOUT`초(기본 60)로 실행 시간을 제한하고, 결과를 통과·불일치(mismatch)·실행 오류·타임아웃·정규화/읽기 오류·건너뜀으로 구분해 보고합니다.
+표준 순서는 `make test` 다음 `make verify`입니다. `make deps`는 한 번의 pip 호출로 모두 설치하며 `PIP_CONSTRAINT`를 따릅니다. `make test`는 결과를 `test-results/test/`(`summary.json`과 묶음별 JUnit 파일)에 기록합니다.
+
+`make verify`는 전체 라이브 검증입니다. 모든 골든에 더해 FastAPI 퀵스타트, Flask/FastAPI, Django/Celery, Streamlit, AI 에이전트/MCP/RAG, 마이그레이션, 성능 테스트 묶음을 실행합니다. `make docker-up` 데이터베이스 외에 `CUBRID_TEST_URL`과 `CUBRID_DASHBOARD_TEST_URL`에 전용 빈 CUBRID 데이터베이스 두 개가 필요하며, 연결할 수 없거나 건너뛴 테스트·빠진 패키지가 있으면 실패하고, 결과를 `test-results/verify/`(`summary.json`, `environment.json`, JUnit, 로그)에 기록합니다(레인별 증거는 계속 `.live-evidence/`에 남습니다). 데이터베이스를 띄우는 방법은 [CONTRIBUTING.md](https://github.com/cubrid-lab/cubrid-cookbook-python/blob/main/CONTRIBUTING.md#live-verification)를 참고하세요.
+
+### 고급: 디버깅용 레인
+
+바꾼 예제만 확인하려면 부분 레인을 실행하세요. 부분 레인은 `PARTIAL: ...` 줄을 출력합니다. 통과해도 전체 검증이 아니며, 전체 검증은 완전한 `make verify`뿐입니다.
+
+```bash
+make verify-goldens           # 골든 기반 모든 예제를 로컬 CUBRID에 대해 실행 (VERIFY_PATHS=<dir>로 범위 축소)
+```
+
+`make verify-goldens`는 예제 요구 패키지가 빠져 있으면 "run `make deps` first"를 출력하고 바로 멈추며, 스크립트마다 `VERIFY_TIMEOUT`초(기본 60)로 실행 시간을 제한하고, 결과를 통과·불일치(mismatch)·실행 오류·타임아웃·정규화/읽기 오류·건너뜀으로 구분해 보고합니다. 테스트 묶음 레인(`make verify-web`, `make verify-ai-agent` 등)은 [CONTRIBUTING.md](https://github.com/cubrid-lab/cubrid-cookbook-python/blob/main/CONTRIBUTING.md#advanced-debugging-lanes)에 있습니다.
 
 ## 다음 단계
 
@@ -71,6 +143,7 @@ make verify                   # 골든 기반 모든 예제를 로컬 CUBRID에 
 |---|---|
 | 복사-수정형 시작점 | `templates/` |
 | JDBC→Python 마이그레이션 | `migration/java-to-python/` |
+| CUBRIDdb→pycubrid 드라이버 이전 | `migration/cubriddb-to-pycubrid/` |
 | 성능 패턴 | `performance/` |
 | CUBRID의 알려진 특성 | `pitfalls/`, `KNOWN_ISSUES.md` |
 | 지원 버전 | `SUPPORT_MATRIX.md` |

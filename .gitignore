@@ -63,13 +63,25 @@ site/
 # Staged into docs/ by scripts/stage_docs.sh at build time (not authored there)
 docs/catalog.md
 docs/getting-started.md
+docs/first-cubrid.md
+docs/first-cubrid-first-query.md
+docs/first-cubrid-save-a-row.md
+docs/first-cubrid-rollback.md
+docs/first-cubrid-finish.md
+docs/quickstart-fastapi.md
+docs/quickstart-sqlalchemy.md
 docs/support-matrix.md
 docs/known-issues.md
 docs/changelog.md
 docs/fundamentals*.md
+docs/migration-cubriddb-to-pycubrid.md
 docs/performance.md
 docs/pitfalls.md
 docs/template-*.md
 
 # Demo recordings are staged here before review and promotion (demos/README.md)
 .demo-artifacts/
+
+# Live verification evidence written by make verify and the make verify-* lanes
+.live-evidence/
+test-results/

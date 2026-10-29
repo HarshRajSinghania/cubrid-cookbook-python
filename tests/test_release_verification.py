@@ -478,8 +478,25 @@ class ReleaseVerificationTests(unittest.TestCase):
         self.assertIn("VERIFY_RESULT: ${{ needs.verify.result }}", report)
         self.assertIn("name: ${{ steps.report.outputs.artifact }}", report)
         self.assertIn("if-no-files-found: error", report)
-        # Re-running failed jobs must be able to replace both artifacts.
-        self.assertEqual(WORKFLOW.count("overwrite: true"), 2)
+        # Re-running failed jobs must be able to replace every artifact, each in
+        # its own named upload step.
+        steps = {step.split("\n", 1)[0]: step for step in WORKFLOW.split("      - name: ")[1:]}
+        for name in (
+            "Upload release verification result",
+            "Upload release verification report",
+            "Upload live evidence",
+        ):
+            with self.subTest(step=name):
+                self.assertIn("overwrite: true", steps[name])
+        # Live evidence never decides the release smoke result, and a release
+        # workflow call writes no artifact into the caller's run (#426).
+        evidence = steps["Upload live evidence"]
+        self.assertIn("continue-on-error: true", evidence)
+        self.assertIn("if: always() && env.RELEASE_WORKFLOW_CALL != 'true'", evidence)
+        self.assertLess(
+            WORKFLOW.index("- name: Upload live evidence"),
+            WORKFLOW.index("- name: Report release smoke result"),
+        )
         self.assertNotIn("pypi", report.lower())
 
     def test_report_lists_a_python_311_cell_and_names_its_failure(self) -> None:
@@ -508,8 +525,15 @@ class ReleaseVerificationTests(unittest.TestCase):
     def test_release_verification_adds_only_a_python_311_cell(self) -> None:
         verify = WORKFLOW[WORKFLOW.index("\n  verify:") : WORKFLOW.index("\n  report:")]
         strategy = verify[verify.index("    strategy:") : verify.index("    steps:")]
-        # Default cells: the two CUBRID versions on the current Python 3.12.
-        self.assertIn('        cubrid: ["11.2", "11.4"]\n', strategy)
+        # Default cells: the two CUBRID versions on the current Python 3.12; only a
+        # push to main and the daily cron, never a request with inputs.package
+        # (every release), narrow them to 11.4 (#480).
+        self.assertIn(
+            "${{ fromJSON(!inputs.package && (github.event_name == 'push' || "
+            "(github.event_name == 'schedule' && github.event.schedule == '0 0 * * 0,2-6')) "
+            '&& \'["11.4"]\' || \'["11.2", "11.4"]\') }}',
+            " ".join(strategy.split()).replace("( ", "(").replace("\n", " "),
+        )
         self.assertIn('        python: ["3.12"]\n', strategy)
         # The one extra cell is CUBRID 11.4 on the supported minimum, 3.11 ...
         self.assertEqual(
@@ -535,8 +559,8 @@ class ReleaseVerificationTests(unittest.TestCase):
             "${{ matrix.python != '3.12' && format(', Python {0}', matrix.python) || '' }})",
             verify,
         )
-        # No new trigger or schedule: still the single daily cron.
-        self.assertEqual(WORKFLOW.count("cron:"), 1)
+        # No new trigger: the daily and the weekly cron (#480) only.
+        self.assertEqual(WORKFLOW.count("cron:"), 2)
 
     def test_summary_command_records_the_python_of_the_cell(self) -> None:
         self.payload(request_id="test-238-a1b2c3")
@@ -593,7 +617,8 @@ class ReleaseVerificationTests(unittest.TestCase):
     def test_release_requires_exactly_the_workflow_matrix_cells(self) -> None:
         verify = WORKFLOW[WORKFLOW.index("\n  verify:") : WORKFLOW.index("\n  report:")]
         strategy = verify[verify.index("    strategy:") : verify.index("    steps:")]
-        cubrids = re.search(r"cubrid: \[(.*?)\]", strategy).group(1)
+        # A release always takes the wide branch of the cubrid expression (#480).
+        cubrids = re.search(r"\|\| '\[(.*?)\]'\) \}\}", strategy).group(1)
         pythons = re.search(r"python: \[(.*?)\]", strategy).group(1)
         cells = {
             (c, p)

@@ -22,6 +22,8 @@ inline code spans are left untouched. Run it before ``mkdocs build --strict``
 'support-matrix.md'
 >>> rewrite_target("pitfalls/#top", "README.md", "docs/catalog.md", REPO_ROOT)
 'pitfalls.md#top'
+>>> rewrite_target("SUPPORT_MATRIX.md?view=raw#versions", "README.md", "docs/catalog.md", REPO_ROOT)
+'support-matrix.md?view=raw#versions'
 >>> rewrite_target("./connect/", "fundamentals/README.md", "docs/fundamentals.md", REPO_ROOT)
 'https://github.com/cubrid-lab/cubrid-cookbook-python/tree/main/fundamentals/connect'
 >>> rewrite_target("https://example.com/x", "README.md", "docs/catalog.md", REPO_ROOT)
@@ -48,6 +50,13 @@ UNPUBLISHED_DOCS = ("docs/internal/",)
 STAGE = [
     ("README.md", "docs/catalog.md"),
     ("GETTING_STARTED.md", "docs/getting-started.md"),
+    ("quickstart/first-cubrid/README.md", "docs/first-cubrid.md"),
+    ("quickstart/first-cubrid/first-query.md", "docs/first-cubrid-first-query.md"),
+    ("quickstart/first-cubrid/save-a-row.md", "docs/first-cubrid-save-a-row.md"),
+    ("quickstart/first-cubrid/rollback.md", "docs/first-cubrid-rollback.md"),
+    ("quickstart/first-cubrid/finish.md", "docs/first-cubrid-finish.md"),
+    ("quickstart/5min-fastapi/README.md", "docs/quickstart-fastapi.md"),
+    ("quickstart/5min-sqlalchemy/README.md", "docs/quickstart-sqlalchemy.md"),
     ("SUPPORT_MATRIX.md", "docs/support-matrix.md"),
     ("KNOWN_ISSUES.md", "docs/known-issues.md"),
     ("CHANGELOG.md", "docs/changelog.md"),
@@ -59,6 +68,7 @@ STAGE = [
         "fundamentals/parameterized-queries/README.md",
         "docs/fundamentals-parameterized-queries.md",
     ),
+    ("migration/cubriddb-to-pycubrid/README.md", "docs/migration-cubriddb-to-pycubrid.md"),
     ("performance/README.md", "docs/performance.md"),
     ("pitfalls/README.md", "docs/pitfalls.md"),
     ("templates/api-service-fastapi/README.md", "docs/template-api-service-fastapi.md"),
@@ -90,11 +100,15 @@ def _is_external(target: str) -> bool:
 
 
 def _split(target: str) -> tuple[str, str]:
-    for sep in ("#", "?"):
-        if sep in target:
-            path, rest = target.split(sep, 1)
-            return path, sep + rest
-    return target, ""
+    # Cut at whichever delimiter comes first. Testing "#" before "?" made a
+    # target such as "SUPPORT_MATRIX.md?view=raw#versions" keep its query in the
+    # path, so the repository existence check looked for a file named
+    # "SUPPORT_MATRIX.md?view=raw" and staging reported a broken link.
+    positions = [index for index in (target.find("#"), target.find("?")) if index != -1]
+    if not positions:
+        return target, ""
+    index = min(positions)
+    return target[:index], target[index:]
 
 
 def _page_for(resolved: str, root: Path) -> str | None:

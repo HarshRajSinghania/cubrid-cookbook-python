@@ -26,7 +26,9 @@ sys.path.insert(0, str(ROOT))
 from scripts import check_docs_sync  # noqa: E402
 from scripts.check_docs_sync import (  # noqa: E402
     discover_examples,
+    discover_nested_recipes,
     find_undocumented,
+    find_untested,
     load_allowlist,
 )
 
@@ -93,6 +95,65 @@ class PitfallsGateTests(unittest.TestCase):
             self.assertEqual(find_undocumented(examples, ""), [])
 
 
+class NestedRecipeSmokeCoverageTests(unittest.TestCase):
+    """A tested sibling must not hide an untested Flask or FastAPI recipe."""
+
+    @staticmethod
+    def make_recipe(root: Path, family: str, name: str, coverage: str | None = None) -> None:
+        recipe = root / family / name
+        recipe.mkdir(parents=True)
+        (recipe / "app.py").write_text("# example\n", encoding="utf-8")
+        if coverage:
+            (recipe / coverage).mkdir()
+
+    def test_nested_recipes_are_checked_independently(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for family in ("templates/flask", "templates/api-service-fastapi/recipes"):
+                self.make_recipe(root, family, "01-tested", "tests")
+                self.make_recipe(root, family, "02-golden", "expected")
+                self.make_recipe(root, family, "03-missing")
+                notes = root / family / "04-docs-only"
+                notes.mkdir()
+                (notes / "README.md").write_text("no runnable code\n", encoding="utf-8")
+
+            examples = discover_examples(root)
+            self.assertEqual(find_untested(root, examples, set()), [])
+            smoke_cases = [*examples, *discover_nested_recipes(root)]
+            missing = find_untested(root, smoke_cases, set())
+            self.assertEqual(
+                missing,
+                [
+                    "templates/flask/03-missing",
+                    "templates/api-service-fastapi/recipes/03-missing",
+                ],
+            )
+            self.assertEqual(
+                find_untested(root, smoke_cases, {"templates/flask/03-missing"}),
+                ["templates/api-service-fastapi/recipes/03-missing"],
+            )
+
+    def test_main_warns_about_nested_missing_test_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_recipe(root, "templates/flask", "01-tested", "tests")
+            self.make_recipe(root, "templates/flask", "02-missing")
+            (root / "scripts").mkdir()
+            (root / "README.md").write_text("templates/flask\n", encoding="utf-8")
+            (root / "llms.txt").write_text("templates/flask\n", encoding="utf-8")
+            fake_script = root / "scripts" / "check_docs_sync.py"
+
+            with (
+                mock.patch.object(check_docs_sync, "__file__", str(fake_script)),
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                self.assertEqual(check_docs_sync.main(), 0)
+
+            self.assertIn("WARN: examples without smoke coverage", out.getvalue())
+            self.assertIn("templates/flask/02-missing", out.getvalue())
+            self.assertNotIn("ERROR: examples missing", out.getvalue())
+
+
 class AllowlistReasonTests(unittest.TestCase):
     """An allowlist entry must record a reason (issue #174)."""
 
@@ -151,6 +212,132 @@ class AllowlistReasonTests(unittest.TestCase):
 
     def test_repository_allowlist_is_valid(self) -> None:
         load_allowlist(ROOT / "scripts" / "docs-sync-allowlist.txt")
+
+
+class FindUntestedTests(unittest.TestCase):
+    """Exercise find_untested() and main()'s warning block (issue #455)."""
+
+    def test_bare_example_is_untested_while_expected_and_nested_tests_are_covered(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "templates" / "bare").mkdir(parents=True)
+            (root / "templates" / "golden" / "expected").mkdir(parents=True)
+            (root / "templates" / "suite" / "sub" / "tests").mkdir(parents=True)
+
+            examples = ["templates/bare", "templates/golden", "templates/suite"]
+            untested = find_untested(root, examples, set())
+
+            self.assertEqual(untested, ["templates/bare"])
+
+    def test_regular_file_named_tests_or_expected_does_not_count_as_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "templates" / "golden").mkdir(parents=True)
+            (root / "templates" / "suite" / "sub").mkdir(parents=True)
+            (root / "templates" / "golden" / "expected").write_text("Expected!")
+            (root / "templates" / "suite" / "sub" / "tests").write_text("Tests!")
+
+            examples = ["templates/golden", "templates/suite"]
+            untested = find_untested(root, examples, set())
+
+            self.assertEqual(untested, ["templates/golden", "templates/suite"])
+
+    def test_allowlisted_example_is_not_returned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "templates" / "allowed").mkdir(parents=True)
+
+            examples = ["templates/allowed"]
+            untested = find_untested(root, examples, {"templates/allowed"})
+
+            self.assertEqual(untested, [])
+
+    def test_main_warns_about_untested_examples_and_exits_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "templates" / "bare").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            (root / "README.md").write_text("templates/bare\n", encoding="utf-8")
+            (root / "llms.txt").write_text("templates/bare\n", encoding="utf-8")
+            fake_script = root / "scripts" / "check_docs_sync.py"
+
+            with (
+                mock.patch.object(check_docs_sync, "__file__", str(fake_script)),
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                exit_code = check_docs_sync.main()
+
+                self.assertEqual(exit_code, 0)
+                self.assertIn("WARN: examples without smoke coverage", out.getvalue())
+                self.assertIn("templates/bare", out.getvalue())
+
+
+class MainErrorTests(unittest.TestCase):
+    """Exercise main()'s exit-1 error blocks on undocumented examples (issue
+    #512)."""
+
+    def test_example_missing_only_from_readme_makes_main_exit_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "templates" / "bare" / "expected").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            (root / "README.md").write_text("")
+            (root / "llms.txt").write_text("templates/bare\n")
+            fake_script = root / "scripts" / "check_docs_sync.py"
+
+            with (
+                mock.patch.object(check_docs_sync, "__file__", str(fake_script)),
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                exit_code = check_docs_sync.main()
+
+                self.assertEqual(exit_code, 1)
+                self.assertIn("ERROR: examples missing from README.md:", out.getvalue())
+                self.assertIn("templates/bare", out.getvalue())
+                self.assertNotIn("ERROR: examples missing from llms.txt:", out.getvalue())
+                self.assertNotIn("OK:", out.getvalue())
+
+    def test_example_missing_only_from_llms_txt_makes_main_exit_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "templates" / "bare" / "expected").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            (root / "README.md").write_text("templates/bare\n")
+            (root / "llms.txt").write_text("")
+            fake_script = root / "scripts" / "check_docs_sync.py"
+
+            with (
+                mock.patch.object(check_docs_sync, "__file__", str(fake_script)),
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                exit_code = check_docs_sync.main()
+
+                self.assertEqual(exit_code, 1)
+                self.assertIn("ERROR: examples missing from llms.txt:", out.getvalue())
+                self.assertIn("templates/bare", out.getvalue())
+                self.assertNotIn("ERROR: examples missing from README.md:", out.getvalue())
+                self.assertNotIn("OK:", out.getvalue())
+
+    def test_example_missing_from_both_files_prints_both_errors_and_exits_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "templates" / "bare" / "expected").mkdir(parents=True)
+            (root / "scripts").mkdir()
+            (root / "README.md").write_text("")
+            (root / "llms.txt").write_text("")
+            fake_script = root / "scripts" / "check_docs_sync.py"
+
+            with (
+                mock.patch.object(check_docs_sync, "__file__", str(fake_script)),
+                mock.patch("sys.stdout", new_callable=io.StringIO) as out,
+            ):
+                exit_code = check_docs_sync.main()
+
+                self.assertEqual(exit_code, 1)
+                self.assertIn("ERROR: examples missing from README.md:", out.getvalue())
+                self.assertIn("ERROR: examples missing from llms.txt:", out.getvalue())
+                self.assertIn("templates/bare", out.getvalue())
+                self.assertNotIn("OK:", out.getvalue())
 
 
 if __name__ == "__main__":

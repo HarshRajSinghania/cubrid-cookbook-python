@@ -19,7 +19,7 @@ Direct database access using the [pycubrid](https://github.com/cubrid-lab/pycubr
 The root project Docker Compose provides CUBRID. Start from the repository root:
 
 ```bash
-make up
+make docker-up
 ```
 
 ## Setup
@@ -217,7 +217,7 @@ All users (5 rows):
 
 | Issue | Solution |
 |-------|----------|
-| `ConnectionError: Failed to connect` | Ensure CUBRID is running: `make up` from repo root |
+| `pycubrid.exceptions.OperationalError: failed to connect to CUBRID broker` | Ensure CUBRID is running: `make docker-up` from repo root |
 | `InterfaceError: Connection closed` | Don't reuse a closed connection — create a new one |
 | `IntegrityError: UNIQUE violation` | The row already exists — use UPDATE or ON DUPLICATE KEY UPDATE |
 | Parameters not binding | Use `?` placeholders (qmark style), not `%s` or `:name` |

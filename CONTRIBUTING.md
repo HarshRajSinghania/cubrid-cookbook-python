@@ -1,5 +1,7 @@
 # Contributing to cubrid-cookbook-python
 
+**Issue titles:** use `feat:`, `bug:`, `docs:`, etc. without a required scope; [organization guidance](https://github.com/cubrid-lab/.github/blob/main/docs/ISSUE_PR_COMMIT_STANDARD.md). **PR/commit titles:** retain Conventional Commits and local CI rules. Triage owns validity, relative priority and size; PR checks own syntax and tested changes.
+
 Thank you for your interest in contributing! This document provides guidelines
 and instructions for contributing to the project.
 
@@ -23,22 +25,14 @@ Every change to an example ships its implementation, tests, and affected docs
 **together**; code without affected doc updates is incomplete. Unaffected docs
 retain the existing docs-not-needed process.
 
-Maintainer/agent-authored PRs follow the tool-specific route in
-[AGENTS.md](AGENTS.md#development-workflow-cubrid-lab-org-standard):
-- **OpenCode:** Oracle design review before non-trivial implementation and
-  Oracle post-implementation review, with documented findings and validation.
-  Trivial OpenCode changes may skip those Oracle phases with a recorded reason.
-- **Standalone agents (Claude Code, Codex, ChatGPT, or other agent tools):**
-  wait for a substantive submitted GitHub Copilot review or another person's
-  review after opening the PR. A pending request, green CI or automated
-  approval wording alone does not complete the review route.
-- **Human contributions:** normal project review, with no internal agent-tool
-  installation requirement. This is not a fallback for unnamed standalone agents.
-
-The applicable review evidence, updated head, dispositions and open threads
-must be recorded before merge. Live CUBRID, docs and CI rules remain unchanged.
-Maintainers coordinate internal reviews and integration, while contributors
-retain authorship and provide ordinary PR evidence.
+All contributions follow the same review and merge policy regardless of
+human or AI implementation (OpenCode, Codex, Claude Code, ChatGPT, Copilot,
+and other tools). Use required GitHub Actions CI as final test evidence,
+including `make check test` and applicable live CUBRID checks. Local
+validation is encouraged but not an extra merge requirement. AI reviewers
+(Oracle, Copilot and `agent-review`) are optional advisory resources.
+The responsible maintainer confirms review findings and final checks
+before deciding to merge. Preserve current security and release controls.
 
 The existing documentation/coverage rule, not the review-route requirement, is
 checked in CI by `scripts/check_docs_sync.py` (the **Docs sync gate** job).
@@ -61,18 +55,54 @@ small offline test toolchain in a virtual environment:
 
 ```bash
 python3 -m pip install -r quickstart/5min-fastapi/requirements.txt pytest httpx sqlalchemy ruff==0.16.4
-make check
+make check test
 ```
 
-`make check` runs Ruff, documentation and golden-coverage checks, output-normalizer
-tests, mocked quickstart and AI-agent tests, release dependency guards, and fake
-Make/Compose regression tests. `make test-offline` runs just the offline test
-suites. Each suite uses its own process to avoid conflicting recipe module names.
+`make check` is the non-test quality gate: `make lint` (`ruff check`),
+`make format-check` (`ruff format --check`), the documentation checks
+(`make check-docs`) and the golden-coverage check (`make check-coverage`); none of
+them changes a file. `make format` is the only target that rewrites source files
+(`ruff check --fix`, then `ruff format`). `make test` (alias `make test-offline`)
+runs every offline suite: output-normalizer tests (`make test-normalize`), mocked
+quickstart and AI-agent tests, release dependency guards, workflow guards and fake
+Make/Compose regression tests. The suite list lives in
+`scripts/run_offline_tests.py`, and each suite runs in its own process to avoid
+conflicting recipe module names.
+`make test` also writes `test-results/test/` (ignored by git, removed by `make clean`, #461):
+one JUnit file per suite in `junit/` and `summary.json` with the schema version, the
+overall status (`PASS`, `FAIL` or `INCOMPLETE`), per-suite and total counts and the
+suites not run after a failure; the last console line repeats the same status and
+counts. Coverage is not measured, so `summary.json` says `"coverage": {"measured": false}`
+and no `coverage.xml` is written. A failing suite still stops the run and exits 1.
 These checks require no database and do not prove live CUBRID compatibility;
-run the relevant example or `make verify` against CUBRID for that evidence.
-CI runs the same `make check` command on every pull request (see
-[CI tiers](#ci-tiers) for which live lanes run on top of it).
+run the relevant example, a `make verify-*` lane or the full `make verify` against
+CUBRID for that evidence (see [Live verification](#live-verification)).
+`make clean` removes generated files, caches and test results (`.live-evidence/`,
+`test-results/`, `__pycache__`, `.pytest_cache`, `.ruff_cache`, the staged docs pages and `site/`)
+and never touches Docker; `make docker-down` (alias `make down`) stops the lab and keeps
+its data, and only `make docker-clean` deletes the lab's containers and volumes, database
+data included (see [Running Examples](#running-examples)).
+CI runs the same `make check test` command on every pull request (see
+[CI tiers](#ci-tiers) for which live lanes run on top of it). The blocking
+documentation check has its own pinned tools; run it with
+`python3 -m pip install -r .github/requirements-docs-check.txt` and `make docs-check`
+(see [Documentation checks](#documentation-checks)).
 The repository is an example collection, so `pip install -e .` is not supported.
+
+### Agent evaluations
+
+[`agent-evals/`](agent-evals/README.md) holds opt-in benchmark tasks for coding
+agents that change recipes (#352): frozen historical fixes with their base SHA,
+allowed files, goldens, documentation and the live checks they lack, graded offline
+by `scripts/agent_eval.py`. `make agent-eval-check` (part of `make test`)
+re-grades the recorded fixtures; it runs no model and needs no database. No
+contributor needs an AI tool, and no agent score gates a pull request.
+The fixed historical baseline SHA, file allowlists and scoring apply only inside
+an opt-in evaluation; ordinary fixes always use current code and real issue
+acceptance. If you change
+the grader or a task, keep every fixture's `expected.json` truthful and rerun
+`make agent-eval-check`. An offline or mocked result never counts as `make verify`
+or a live suite: report those as not run when you have no CUBRID.
 
 ### CHANGELOG sections
 
@@ -82,8 +112,9 @@ Security, Performance, Documentation, CI, Tests. Write `Documentation`, not
 `Docs`, and put tooling entries under `CI` or `Changed`. `make check-docs` runs
 `scripts/lint_changelog.py`, which enforces this for `[Unreleased]` and for releases
 after 0.2.0. A fenced `###` line is entry content, never a heading; a fenced `## [` release
-header is an error (`scripts/extract_release_notes.py` is not fence-aware and would
-truncate the Release body); an unclosed fence is an error. Only fences that start at
+header is an error (the release-notes extractor this lint matches, `extract_release_notes.py`
+in pycubrid and cubrid-mcp-server, is not fence-aware and would truncate the Release body); an
+unclosed fence is an error. Only fences that start at
 column 0 with three backticks are recognised, not tilde or indented/nested fences.
 
 A duplicate `###` heading within one version section is an error only in `[Unreleased]`
@@ -102,7 +133,7 @@ cubrid-mcp-server and this cookbook except for repository-specific data:
 - **GitHub Actions** — checked weekly; all action bumps arrive as one grouped
   PR. Workflows pin every action by full commit SHA with a `# vX.Y.Z` comment,
   and each action uses the same pin in every workflow;
-  `tests/test_dependabot_config.py` (part of `make check`) enforces both.
+  `tests/test_dependabot_config.py` (part of `make test`) enforces both.
 - **Recipe requirements (pip)** — checked monthly across every standalone
   recipe directory. Updates are grouped by dependency name, so one PR bumps a
   package (for example `flask`) in every recipe that uses it instead of one PR
@@ -121,6 +152,142 @@ When a new recipe adds a `requirements.txt` outside the configured
 `directories` globs, extend the globs in the same PR; the test above fails
 until you do.
 
+### Live verification
+
+The standard sequence is `make test` (offline, no database), then `make verify`.
+`make verify` is the full live verification: it
+runs `scripts/live_gate.py all`, which reruns every golden and every existing live
+pytest suite (it adds no test of its own; each suite runs in its own pytest
+process) against real CUBRID databases, fails closed, and records what ran (#416).
+
+`make verify` runs the lanes listed under [Advanced debugging lanes](#advanced-debugging-lanes)
+in that order, one at a time, so suites with fixed table names never overlap.
+The goldens leave their fixed tables in the `make docker-up` database, so
+`CUBRID_TEST_URL` and `CUBRID_DASHBOARD_TEST_URL` must name two further dedicated,
+empty databases, distinct from each other and from the `make docker-up` database:
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate   # Python 3.11 or later
+make deps        # every example's requirements.txt, in one pip call
+make docker-up   # the examples' database on localhost:33000
+# Two disposable CUBRID containers for the dedicated databases (never your lab container)
+docker run -d --name cubrid-verify -p 127.0.0.1:33005:33000 -e CUBRID_DB=testdb cubrid/cubrid:11.2
+docker run -d --name cubrid-verify-dashboard -p 127.0.0.1:33006:33000 -e CUBRID_DB=testdb cubrid/cubrid:11.2
+export CUBRID_TEST_URL=cubrid+pycubrid://dba@localhost:33005/testdb
+export CUBRID_DASHBOARD_TEST_URL=cubrid+pycubrid://dba@localhost:33006/testdb
+make verify
+docker rm -f cubrid-verify cubrid-verify-dashboard
+```
+
+Wait until the containers accept connections before running a lane (the gate
+reports them as unreachable otherwise). A full run took about 6.5 minutes on
+CUBRID 11.2. `make verify` first checks every URL, every server and the installed
+example dependencies, and runs nothing if one of them fails. The lanes fail closed
+(`CUBRID_LIVE_GATE=1` by default; `1`/`true`/`yes`/`on` enable it,
+empty/`0`/`false`/`no`/`off` disable it, any other value is a usage error). Under
+the gate a lane fails, with a nonzero exit, when:
+
+- a URL it needs is missing, unreachable or not `cubrid+pycubrid://` (no SQLite
+  fallback), names the `make docker-up` database, or the dashboard URL names the same
+  database as `CUBRID_TEST_URL`; or the `make docker-up` database is unreachable;
+- a dedicated database already holds any `cookbook_*` table before the lane: the
+  suites drop and recreate their own tables, so use a dedicated, empty database;
+- any suite fails, collects no test or skips a test, or a suite whose conftest prints a
+  database header (the Flask, FastAPI recipe and dashboard suites) does not print
+  `database: live CUBRID (...)`. The Django and async-worker suites print no header:
+  they skip without `CUBRID_TEST_URL` (a gate failure) and fail on a
+  non-`cubrid+pycubrid` URL;
+- a suite leaves new tables behind or drops a table that existed before it ran
+  (compared with a snapshot taken just before that suite; the quickstart may keep
+  its own table);
+- a golden fails, is skipped, or no golden ran.
+
+The gate also drops `PYTEST_ADDOPTS` and `PYTEST_PLUGINS` from the suites'
+environment. Only a gated run can PASS: `CUBRID_LIVE_GATE=0 make verify-django-celery` keeps the
+suites' own skips and SQLite fallbacks for exploration, and its summary says
+INCOMPLETE at best. The full `make verify` always runs gated, whatever
+`CUBRID_LIVE_GATE` says; run directly without the gate, `scripts/live_gate.py all`
+exits 3 for INCOMPLETE, never 0. The summaries count the root FastAPI template's
+SQLite startup test apart from the live totals (`non_live_totals`). After an interrupted run, drop the leftover `cookbook_*` tables
+in the dedicated databases or use fresh containers.
+
+Each lane replaces only `.live-evidence/<lane>/` (ignored by version control; other
+lanes' files there are kept) with one JUnit XML file and log per suite (the golden
+lane keeps its log and a `results.tsv` with one line per golden) plus `summary.json` and
+`summary.txt`: the commands, commit SHA, the Python, driver and framework versions of the
+interpreter that runs pytest (`PYTHON`), the CUBRID server versions and the
+selected/passed/failed/skipped counts and case outcomes per suite. `make verify` also
+writes `.live-evidence/verify-summary.json` and `verify-summary.txt`, which report the
+golden comparisons and the pytest lanes separately and name every failed golden.
+
+Every live run also writes `test-results/verify/` (#462; ignored by version control,
+removed by `make clean`), next to `make test`'s `test-results/test/` and built with the
+same `scripts/report_results.py` helpers:
+
+- `summary.json`: `schema_version`, the overall `status` (`PASS`, `FAIL` or
+  `INCOMPLETE`), `scope` (`full` or `partial`) and `partial`, total counts, and one
+  `lanes` entry per lane with its status, whether it `executed`, its counts, JUnit file,
+  logs and failure reasons. A lane that never ran is `INCOMPLETE` with
+  `"executed": false` and is listed in `not_run`, so a summary never reads `PASS` without
+  every listed lane having run; the full `make verify` lists all seven lanes.
+- `environment.json`: the command, the Python version and platform, the package versions
+  of the interpreter that runs pytest, the CUBRID server versions with their URLs
+  (password hidden), the commit, and the GitHub Actions workflow, job and run id when set.
+- `junit/<lane>.xml`: one JUnit file per pytest lane (the goldens lane has none; its
+  `results.tsv` is under `logs/goldens/`), and `logs/<lane>/`: the lane's logs and
+  `summary.txt`.
+- `summary.md`: `summary.json` rendered as a Markdown table, for a CI step summary.
+
+The last console line, `verify results: <STATUS> (<scope>) <lane> <STATUS>, ... ->
+test-results/verify/summary.json`, is built from `summary.json` alone. `make verify`
+empties the directory first. A focused lane replaces only its own lane's files, and its
+`summary.json` merges the other lanes recorded there for the same commit (records of
+another commit are deleted), so consecutive `make verify-*` runs, as in the pull-request
+smoke lanes, end with one summary of all of them; it stays `partial`. Database passwords
+from `CUBRID_TEST_URL` and `CUBRID_DASHBOARD_TEST_URL`, as given, percent-encoded or
+XML-escaped, are replaced with `***` in every file of `test-results/verify/` and
+`.live-evidence/`. `.live-evidence/` keeps its layout for at least one release, because
+`smoke-test.yml` and the pull-request smoke jobs read and upload it; new tooling should
+read `test-results/verify/`.
+
+Only a complete `make verify` run reports the full verification. Every other run is
+labeled `PARTIAL` (#460): `make verify-goldens` (whether scoped by `VERIFY_PATHS` or
+not) ends its output with a `PARTIAL: checked only the goldens under: <roots>` line,
+and a focused lane (`make verify-quickstart`, `verify-web`, ..., or
+`scripts/live_gate.py <lane>`) prints `PARTIAL: checked only the <lanes> lane(s)`,
+repeats it in that lane's `summary.txt` and records `"partial": true` in its
+`summary.json`. The lanes that `make verify` itself runs and its
+`verify-summary.json` record `"partial": false`. A `PASS` or `Results:` line from a
+partial run therefore never means the full verification passed; the label does not
+change which goldens or suites run.
+
+`make verify` is always the full verification: an exported `VERIFY_PATHS` does not
+narrow it, and `make verify VERIFY_PATHS=<dirs>` on the command line fails with a
+one-line message that names `make verify-goldens VERIFY_PATHS=<dirs>`, the partial
+check of only the goldens under those roots (#437). CI calls the same targets: `smoke-test.yml` runs the
+full `make verify` on CUBRID 11.4, and on 11.2 too on its weekly, manual and release runs, and the pull-request smoke lanes run
+`make verify-goldens VERIFY_PATHS=<roots>` and the focused `verify-*` lanes their
+changed paths select (see [CI tiers](#ci-tiers)). The other pull-request recipe
+jobs keep their own per-recipe environments.
+
+### Advanced debugging lanes
+
+Use these to debug one family after `make test` and `make verify` (or instead of a
+full run while iterating). Each lane runs on its own, prints `PARTIAL`, and a pass
+is never the full verification (see the `PARTIAL` rules above). `make verify-templates`
+runs `verify-web`, `verify-django-celery` and `verify-dashboard`; `make demo` starts
+the database and runs `verify-goldens`.
+
+| Lane (`make` target) | What runs | Database |
+|----------------------|-----------|----------|
+| goldens (`verify-goldens`) | every `expected/*.expected` golden, see [Golden Verification](#golden-verification) | the `make docker-up` database |
+| `verify-quickstart` | `quickstart/5min-fastapi/tests/test_live.py`: `/health` and CRUD (#420) | the `make docker-up` database (the app connects to port 33000 and `testdb` only); it keeps its own `cookbook_quickstart_items` table |
+| `verify-performance` | `performance/tests/test_benchmarks.py`: the five migration goldens and the three benchmarks (#423), see [Performance and migration lane](#performance-and-migration-lane) | the `make docker-up` database (the scripts hard-code it) |
+| `verify-web` | `templates/flask/*/tests`, `templates/api-service-fastapi/recipes/*/tests`; `templates/api-service-fastapi/tests` (root template startup and `/health`) | `CUBRID_TEST_URL`; the root template test uses SQLite by design and is reported as startup-only, not live evidence or quickstart coverage |
+| `verify-django-celery` | `templates/django/tests`, `templates/async-worker/tests` | `CUBRID_TEST_URL`; Celery tasks run directly (`.run()` / eager `.apply()`), without Redis or a worker |
+| `verify-ai-agent` | `templates/ai-agent/tests/test_live.py`: agent state, MCP tools and RAG, each script run twice (#422) | `CUBRID_TEST_URL` |
+| `verify-dashboard` | `templates/dashboard/tests` | `CUBRID_DASHBOARD_TEST_URL`: the suite drops and recreates its FK-linked tables |
+
 ### CI tiers
 
 Two workflows share live CUBRID validation (#222). `scripts/ci_scope.py`
@@ -131,11 +298,11 @@ unexpectedly skipped lane, or a failed classification, fails the gate.
 
 | Tier | When | What runs |
 |------|------|-----------|
-| 1 — cheap checks | every pull request | Ruff, `make check`, docs-sync, doc-lint, classification and the gate; the strict docs-site build |
-| 2 — path-selected live lanes | pull requests | only the touched family on CUBRID 11.4 / Python 3.12: Flask/FastAPI → the changed recipes' own suites (representative suites for shared files, see below); dashboard, async-worker, Django → their suite; CQRS recipe → its pinned job; golden examples → `Smoke Tests (CUBRID 11.4)` with `make verify` scoped to the touched examples; AI-agent code or other files in example trees → the same lane with a full `make verify` |
-| 2 — fan-out | pull requests changing shared live infrastructure (`Makefile`, `docker-compose.yml`, `scripts/normalize_output.sh`, readiness/coverage scripts), `ci.yml`, `scripts/ci_scope.py` or `.github/actions/` | every live lane, both smoke lanes and CQRS on 11.2 + 11.4 with full `make verify`, Python 3.11 + 3.14 compatibility |
+| 1 — cheap checks | every pull request | Ruff, `make check`, docs-sync, docs-check, doc-lint, classification and the gate; the strict docs-site build |
+| 2 — path-selected live lanes | pull requests | only the touched family on CUBRID 11.4 / Python 3.12: Flask/FastAPI → the changed recipes' own suites (representative suites for shared files, see below); dashboard, async-worker, Django → their suite; CQRS recipe → its pinned job; golden examples → `Smoke Tests (CUBRID 11.4)` with `make verify-goldens` scoped to the touched examples; the FastAPI quickstart, `performance/` (and `performance/tests/test_benchmarks.py`) or AI-agent code (and `templates/ai-agent/tests/test_live.py`) → the same lane with every golden and the focused `make verify-quickstart` / `verify-performance` / `verify-ai-agent` lane; other files in example trees → the same lane with every golden and all three focused lanes |
+| 2 — fan-out | pull requests changing shared live infrastructure (`Makefile`, `docker-compose.yml`, `scripts/normalize_output.sh`, readiness/coverage scripts), `ci.yml`, `scripts/ci_scope.py` or `.github/actions/` | every live lane, both smoke lanes and CQRS on 11.2 + 11.4 with every golden (`make verify-goldens VERIFY_PATHS=.`) and all three focused lanes, Python 3.11 + 3.14 compatibility |
 | 3 — Python compatibility | push to `main`, weekly schedule, manual `ci.yml` run; pull requests changing `fundamentals/pycubrid`, `fundamentals/sqlalchemy` or fan-out paths | 3.11–3.14 on broad events; 3.11 + 3.14 endpoints on those pull requests |
-| 4 — broad smoke | `smoke-test.yml`: push to `main`, nightly schedule, manual run, release verification (`repository_dispatch` / `workflow_call`) | every golden plus all Flask/FastAPI, async-worker, Django and dashboard suites on CUBRID 11.2 + 11.4 (Python 3.12); a release verification adds one CUBRID 11.4 cell on Python 3.11, the supported minimum |
+| 4 — broad smoke | `smoke-test.yml`: push to `main`, daily schedule, weekly schedule, manual run, release verification (`repository_dispatch` / `workflow_call`) | the full, fail-closed `make verify` (every golden and every live suite: quickstart, migration and performance, Flask/FastAPI, Django/Celery, AI agent, dashboard), then `make verify-ai-agent` again, on job-owned CUBRID containers (Python 3.12): 11.4 only for a push to `main` and the daily schedule; 11.2 + 11.4 for the weekly schedule (Mondays), manual runs and release verification, which also adds one CUBRID 11.4 cell on Python 3.11, the supported minimum (#480) |
 
 - Docs-only pull requests (`*.md`, `docs/`, `mkdocs.yml`, …) start no live CUBRID,
   except `SUPPORT_MATRIX.md`, which documents the driver floors.
@@ -147,13 +314,33 @@ unexpectedly skipped lane, or a failed classification, fails the gate.
   weekly `ci.yml` schedule and on manual `ci.yml` runs — not on pushes to `main`,
   since the floors are fixed releases; edits to a lane directory's code do not select it, the weekly schedule covers them. One job, about 3 minutes.
   Unknown paths fail closed to every recipe family lane and the 11.4 smoke lane
-  with a full `make verify`.
+  with every golden (`make verify-goldens VERIFY_PATHS=.`) and all three focused
+  lanes.
 - CUBRID 11.2 runs on a pull request only for version-sensitive changes:
   `smoke-test.yml`, `scripts/release_smoke.py`, `scripts/mcp_smoke.py`, the
   fan-out paths, or recipe 10's `requirements.txt` (CQRS job only).
-- Example directories with no live consumer (`performance/`, the FastAPI
-  quickstart, `fundamentals/parameterized-queries`) are covered by the offline
-  checks only, on every event.
+- `fundamentals/parameterized-queries`, the only example directory with no live
+  consumer, is covered by the offline checks only, on every event.
+- The PR smoke lanes (`.github/actions/pr-smoke`) use the same commands as a
+  local run: `make deps` under the selected driver constraints,
+  `make verify-goldens VERIFY_PATHS=<roots>` for the scoped goldens, then the
+  focused lanes `scripts/ci_scope.py` names in `smoke_lanes`, one at a time on the
+  examples database: `make verify-quickstart` (about 1 s) for
+  `quickstart/5min-fastapi/` (other than Markdown), `make verify-performance` (about a
+  minute, bounded at 5 minutes) for `performance/` and
+  `performance/tests/test_benchmarks.py`, and `make verify-ai-agent` twice on a
+  second, dedicated CUBRID container (`CUBRID_TEST_URL`; about 20 s each) for
+  `templates/ai-agent/` and `templates/ai-agent/tests/test_live.py` (#425, #426, #428). Each of
+  these paths runs every golden, even beside a changed golden root. Fan-out, CI
+  policy, release smoke, unknown paths and example-tree files outside a golden root
+  select all three lanes. Each smoke job appends `test-results/verify/summary.md` (one
+  table of every live lane it ran, see [Live verification](#live-verification)) to the
+  job's step summary, collects the CUBRID container and server logs into
+  `test-results/cubrid-logs/` after a failure, and uploads `test-results/` and
+  `.live-evidence/` once, as the `live-evidence-pr-cubrid-<version>` artifact with
+  `test-results/` and `.live-evidence/` folders (also when it fails; 14-day
+  retention; an upload failure never fails the lane). These steps add no permission,
+  secret or trigger.
 - The Flask/FastAPI lane (#227) runs the `tests/` suite of each changed recipe
   root (`ci_scope.web_suites`: a `templates/flask/` or
   `templates/api-service-fastapi/recipes/` recipe, or the root FastAPI app), each
@@ -179,6 +366,15 @@ unexpectedly skipped lane, or a failed classification, fails the gate.
   only in its CQRS job. Every selected suite must pass at least one test
   (checked on pytest's final summary line) within 10 minutes, or the lane and
   `CI Gate` fail.
+- `smoke-test.yml` runs the full `make verify` on three job-owned CUBRID
+  containers of the matrix version: the examples database (`localhost:33000`,
+  goldens, quickstart and performance), `CUBRID_TEST_URL` (`:33100`; web,
+  Django/Celery, AI agent) and `CUBRID_DASHBOARD_TEST_URL` (`:33200`). It never
+  passes `VERIFY_PATHS`, which `make verify` refuses on the command line. `make verify-ai-agent` then runs a second time on the same database, and
+  both runs keep their evidence (`ai-agent-run-1/`, `ai-agent-run-2/`). The job
+  uploads `.live-evidence/` once as `live-evidence-cubrid-<version>` (also when it
+  fails, with `continue-on-error` so the upload can never change the release
+  smoke result; a release workflow call uploads none into the caller's run).
 - `smoke-test.yml` does not run on pull requests, so no pull request repeats the
   broad 11.2/11.4 matrix. Its exact release verification inputs, outputs and
   fail-closed reporting are unchanged. To test a change to it before merging, run
@@ -190,16 +386,44 @@ unexpectedly skipped lane, or a failed classification, fails the gate.
   two, so the lanes are not separate required checks (see
   [Main branch protection](#main-branch-protection)).
 - On `main` and schedule events `ci.yml` runs only what `smoke-test.yml` does not
-  cover (Python 3.11–3.14 and CQRS pins on 11.2 + 11.4); its other live jobs
+  cover (Python 3.11–3.14 and the CQRS pins: on 11.4 for a push to `main`, on
+  11.2 + 11.4 for the weekly schedule and manual runs, #480); its other live jobs
   report skipped there.
 - Dependabot grouping is unchanged. A grouped multi-directory recipe bump starts
   only the families it touches (for example a Flask bump: one Flask/FastAPI lane)
   plus the cheap checks; a GitHub Actions group bump edits `ci.yml` and therefore
   fans out.
-- The nightly `smoke-test.yml` schedule stays daily: between 2026-09-01 and
+- The `smoke-test.yml` schedule stays daily: between 2026-09-01 and
   2026-10-07, 10 of 37 scheduled runs failed in `make verify`, most on days
   without a `main` push (2026-09-03 to 09-08, 09-25/26), so main pushes alone
   would have detected those regressions days later.
+- **Per-event CUBRID cadence (#480).** Routine runs keep one full, fail-closed
+  signal without repeating the historical server every time: a push to `main` and
+  the daily cron (`0 0 * * 0,2-6`) run `make verify` on CUBRID 11.4 only; the
+  weekly cron (`0 0 * * 1`, the Monday of the weekly `ci.yml` schedule; the daily
+  cron skips Monday, so no slot runs both) and manual runs keep 11.2 + 11.4.
+  Release verification (`repository_dispatch`, a pinned manual run, `workflow_call`
+  and candidate mode) keeps exactly the three cells in
+  `scripts/release_smoke.py` `RELEASE_CELLS`. The verify matrix narrows only for
+  those two exact routine cases, so any other event or cron string runs both
+  versions; `tests/test_ci_scope.py` evaluates the matrix expressions for every
+  event, including a workflow call made from a caller's push or schedule.
+- **Newest CUBRID image check (#480), advisory.** The weekly smoke run (and a
+  manual full smoke) also runs the `Newest CUBRID image (advisory)` job: it pulls
+  `cubrid/cubrid:latest` and `cubrid/cubrid:11.4` once, records each image digest
+  and `cubrid_rel` engine version in the run summary, and lets
+  `scripts/latest_server.py` decide. The same digest is reported as the
+  newest-stable image with no extra database; every smoke cell records the image
+  it actually ran (digest and `cubrid_rel`) in its own summary, so the run's 11.4
+  cells tested that image only if they show the same digest;
+  a `latest` that is not a newer engine build needs nothing more; only a newer
+  build gets a focused canary (`SELECT VERSION()` on the running server, then
+  `make verify-goldens VERIFY_PATHS=fundamentals/pycubrid`) on its immutable
+  `cubrid/cubrid@sha256:…` reference. A failed pull or lookup is reported as
+  UNVERIFIED (a warning), never as passed. The job is `continue-on-error`, is not
+  part of the release report, and never changes `SUPPORT_MATRIX.md` or the
+  release cells; a newer series is added to the support set only by a reviewed
+  pull request. The `develop` and prerelease tags are never pulled.
 - **Advisory driver-main lane (#239), never gated.** `.github/workflows/driver-main.yml`
   installs `pycubrid` and `sqlalchemy-cubrid` from their `main` branches (pinned
   to the commits resolved at the start of the run, and verified after install)
@@ -233,6 +457,19 @@ round each job up to a whole minute):
 | Push to `main` (`ci.yml` + `smoke-test.yml`) | 21 (12) | 16.3 / 28 | 17 (8) | 11.9 / 22 |
 | Schedule | 2 (2) daily | 6.1 / 7 per day | unchanged daily, plus `ci.yml` weekly 15 (6) | + ~5.7 / 15 per week |
 
+Measured for #480 (median job durations of the last 10 successful runs per event
+before 2026-10-25; billed minutes round each job up): `smoke-test.yml` push jobs
+took 5.6 min (11.4) and 4.9 min (11.2), scheduled jobs 3.9 min (11.4) and 3.7 min
+(11.2), and the `ci.yml` CQRS 11.2 job 0.8 min. The newest-image job is new and
+not yet measured.
+
+| Event | Before live jobs | Before job-min / billed | After live jobs | After job-min / billed |
+|-------|------------------|-------------------------|-----------------|------------------------|
+| Push to `main` (smoke + CQRS) | 4 | 12.1 / 13 | 2 | 6.4 / 7 |
+| Daily schedule (Tuesday–Sunday) | 2 | 7.7 / 8 | 1 | 3.9 / 4 |
+| Weekly schedule (Monday) | 2 | 7.7 / 8 | 2, plus the advisory newest-image job | 7.7 / 8, plus that job |
+| Schedules, per week | 14 | 53.7 / 56 | 8, plus 1 advisory | 31.3 / 32, plus that job |
+
 ---
 
 ### Job timeouts
@@ -244,7 +481,7 @@ lanes, and 60 for `smoke-test.yml`'s `verify` job, whose step-level timeouts add
 to 57 (plus a few untimed setup steps; the observed maximum is 4 minutes).
 Jobs that call the organization's reusable workflows (`doc-lint`, `live-smoke`)
 cannot set a timeout; those callees are an exact allowlist.
-`tests/test_workflow_timeouts.py` (run by `make check`) reads every workflow and
+`tests/test_workflow_timeouts.py` (run by `make test`) reads every workflow and
 fails when an executing job lacks a bounded timeout, when a new external caller is
 not allowlisted, or when `CI Gate` loses `if: always()` or its short timeout.
 
@@ -261,7 +498,7 @@ not allowlisted, or when `CI Gate` loses `if: always()` or its short timeout.
 quickstart/          # 5-minute getting-started examples
 fundamentals/        # Core CUBRID operations with Python
 templates/           # Production-ready application templates
-migration/           # Language migration guides (Java → Python)
+migration/           # Migration guides (Java → Python, CUBRIDdb → pycubrid)
 performance/         # Benchmark-backed optimization patterns
 pitfalls/            # Common mistakes and fixes
 docs/                # Internal docs (PRD, agent playbook)
@@ -271,7 +508,7 @@ docs/                # Internal docs (PRD, agent playbook)
 
 ```bash
 # Start CUBRID
-make up
+make docker-up
 
 # Example: run a FastAPI template
 cd templates/api-service-fastapi/recipes/01-basic-crud
@@ -283,44 +520,68 @@ cd ../../../..
 python fundamentals/pycubrid/01_connect.py
 ```
 
-`make up` starts Compose, then waits up to 120 seconds for the existing
+The root `docker-compose.yml` defines one service, `cubrid` (database `testdb`,
+image `cubrid/cubrid:${CUBRID_VERSION:-11.2}`). It has no fixed container name or
+host name: `CUBRID_DB_HOST: localhost` registers the database for `localhost`, so a
+container recreated by `docker compose down` and `up` opens the database kept in the
+named volumes. The broker is published on `127.0.0.1` only, because the lab's `dba`
+account has no password.
+
+The Docker lifecycle is `make docker-up`, `make docker-down` and `make docker-clean`;
+`make up` and `make down` are aliases of the first two, and `make status` runs
+`docker compose ps`. `make docker-down` removes the containers and the network and
+keeps the volumes; `make docker-clean` also deletes the volumes, database data
+included.
+
+`make docker-up` starts Compose, then waits up to 120 seconds for the existing
 in-container `csql` query to succeed. Each probe and failure diagnostic has a
 5-second limit. To adjust these waits, use `UP_TIMEOUT`, `UP_PROBE_TIMEOUT`, and
-`UP_INTERVAL`, for example `make up UP_TIMEOUT=180`. Image pull/start time occurs
+`UP_INTERVAL`, for example `make docker-up UP_TIMEOUT=180`. Image pull/start time occurs
 before the readiness deadline. This query checks the database inside the
 container; it does not verify the driver's CAS connection. On failure the
 command exits nonzero and prints bounded Compose status/log diagnostics, leaving
 the containers and data available for inspection.
 
+`CUBRID_TEST_PORT` publishes the broker on another host port (default `33000`), for
+example `CUBRID_TEST_PORT=33005 COMPOSE_PROJECT_NAME=cookbook-verify make docker-up`
+for a second lab next to the default one. The examples, their goldens and the
+`make verify` lanes that use the examples database connect to `localhost:33000`, so
+run them against a lab on the default port; a lab on another port is reachable only
+through a URL such as `CUBRID_TEST_URL`.
+
 The root Compose image defaults to CUBRID 11.2. Select another version without
-editing the file: `make down`, then `CUBRID_VERSION=11.4 make up` (combine with
+editing the file: `make docker-down`, then `CUBRID_VERSION=11.4 make docker-up` (combine with
 `UP_TIMEOUT=180` if needed). These commands retain the existing volume; changing
 the server image is not a database-format upgrade. Use fresh, isolated test data
 when switching incompatible versions, and never delete existing data implicitly.
 
 ### Golden Verification
 
-Runnable examples are checked against committed golden output with `make verify`,
+Runnable examples are checked against committed golden output with `make verify-goldens`
+(part of the full `make verify`),
 which discovers each committed `<dir>/expected/<name>.expected`, runs the matching
 `<dir>/<name>.py`, pipes it through `scripts/normalize_output.sh`, and diffs the
 result against that golden file. When you add a one-shot example, capture its
 golden output so CI can guard it.
 
-`make verify` checks all goldens by default; use `VERIFY_PATHS=<directory>` to
-select example roots. Empty/missing roots, zero golden targets, a missing script
+`make verify-goldens` checks all goldens by default; use `VERIFY_PATHS=<directory>` to
+select example roots (the pull-request smoke lanes and the driver-main canary call
+it this way); it is a partial check. `make verify VERIFY_PATHS=<directory>` fails and
+points to it. The comparison itself lives in `scripts/verify_goldens.sh`. Empty/missing roots, zero golden targets, a missing script
 for an expected file, discovery/read errors, and failed scripts or normalizers
 all fail the command. A successful summary has at least one pass and no failures
 or skips. Ordinary recipe failures are collected so the remaining selected
 recipes still produce diagnostics.
 
 To reproduce it from a clean checkout, use a Python 3.11+ virtual environment and
-run `make up`, `make deps`, `make verify`. `make deps` installs `pytest`,
-`sqlalchemy-cubrid[pycubrid]` and the `requirements.txt` of every golden-backed
-example (a directory that owns `expected/`) in one pip resolver call, so
-`PIP_CONSTRAINT` applies to all of them. The same discovery
-(`scripts/example_requirements.py`) backs `scripts/release_smoke.py
-install-examples` in CI; it fails, and so does `make deps`, if a
-golden-backed `requirements.txt` path contains whitespace. Before running anything, `make verify` checks that the
+run `make docker-up`, `make deps`, `make verify-goldens`. `make deps` installs `pytest`,
+`pytest-asyncio`, `sqlalchemy-cubrid[pycubrid]` and the `requirements.txt` of every example (the
+golden-backed ones and those of the live suites, `scripts/example_requirements.py
+--all`) in one pip resolver call, so `PIP_CONSTRAINT` applies to all of them. The
+golden-backed discovery (a directory that owns `expected/`; the same script without
+`--all`) backs `scripts/release_smoke.py install-examples` in CI; it fails, and so
+does `make deps`, if a `requirements.txt` path contains whitespace. Before running
+anything, `make verify-goldens` checks that the
 selected examples' requirements are installed and stops once with "run
 `make deps` first" if not.
 
@@ -339,6 +600,34 @@ is an `EXEC-ERROR`),
 `✗ NORMALIZE-ERROR`, `✗ READ-ERROR` (golden read error) or `? SKIP`, and the
 summary counts each class. Under GitHub Actions each failure also emits an
 `::error file=...::` annotation.
+
+### Performance and migration lane
+
+`make verify-performance` (also part of `make verify`) runs
+`performance/tests/test_benchmarks.py` against the database
+the examples hard-code (`localhost:33000`, `testdb`, `dba`; `make docker-up` and
+`make deps` first) and writes a JUnit report and a summary to `.live-evidence/performance/`
+(ignored by git). It has two groups, reported as separate JUnit classes:
+`TestMigrationGoldens` runs the five `migration/java-to-python` goldens with the
+`make verify` comparison (`scripts/run_example.py`, `scripts/normalize_output.sh`,
+`expected/*.expected`), and `TestPerformanceBenchmarks` runs the three
+`performance/*/benchmark.py` scripts. A benchmark passes when it exits 0 within
+its time limit, prints every comparison line with a finite, nonnegative time and
+the workload it was configured for, prints no error or traceback, and leaves no
+benchmark table behind, also when a failure is injected after the table is
+created; after each test that runs a script, an unrelated sentinel table must be
+unchanged (a failure names that test). Timings are never
+compared with each other or with a threshold, and never go into a golden. The
+report records the CUBRID server, Python, pytest and driver versions.
+The lane runs with `CUBRID_LIVE_GATE=1`: an unreachable database or a missing
+driver fails every database test (the run fails), and the lane also fails if
+the report counts a skipped test or the scripts leave or drop a table. The scripts use fixed table names
+(`cookbook_fetch_test`, `cookbook_bulk_test`, `cookbook_jdbc_*`,
+`cookbook_sensors`), so do not run `make verify-performance` at the same time as another
+`make verify-performance`, `make verify` or a manual benchmark run against the same database. Without the variable, `pytest performance/tests/test_benchmarks.py`
+skips when no database answers. A full run took about a minute on CUBRID 11.2
+(longer on slow machines; the `bulk-insert` per-row COMMIT dominates). When you
+change a benchmark, run it twice in a row to show that no stale table is left behind.
 
 This is enforced: `scripts/check_expected_coverage.py` (run by `make verify` and
 the smoke-test workflow) fails if any runnable `<dir>/*.py` inside a directory
@@ -369,7 +658,7 @@ also installed and run: the `Driver floors (CUBRID 11.4)` CI lane
 (`scripts/driver_floors.py`, see [CI tiers](#ci-tiers)) installs each floor with
 `==` and runs representative goldens; a new directory-specific floor must be
 added to a floor set there, or `tests/test_dependency_floors.py` fails. Run it
-locally against `make up` with `python scripts/driver_floors.py run`.
+locally against `make docker-up` with `python scripts/driver_floors.py run`.
 
 #### Release smoke dependencies
 
@@ -427,7 +716,7 @@ These inputs are read from the event JSON and follow the same validation, exact
 PyPI install, bounded retry, pinning, origin check and summary as a release
 dispatch; an invalid, unavailable or mismatched release fails instead of testing
 the latest release. A manual run with the default inputs (`package=latest`, empty
-`version`), like pushes and the nightly schedule, is an ordinary
+`version`), like pushes and the scheduled runs, is an ordinary
 smoke run on the latest published releases and is reported as not a release
 verification.
 
@@ -608,6 +897,38 @@ Run the smoke dependency guards without a database or network:
 python3 -m unittest discover -s tests -p 'test_release*.py' -v
 ```
 
+#### Refreshing version statements
+
+`SUPPORT_MATRIX.md` keeps three kinds of version information apart (#393), and
+each has one source:
+
+| Statement | Source of truth |
+| --- | --- |
+| Installation floors | each recipe's own `requirements.txt` (checked by `scripts/check_dependency_floors.py` and run by `scripts/driver_floors.py`) |
+| Support policy | the reviewed text and table in `SUPPORT_MATRIX.md` (the SQLAlchemy range is pinned in `scripts/check_support_matrix_counts.py`) |
+| Published package requirements | the published wheel's `METADATA`, with its SHA-256 matching the digest PyPI lists |
+| Tested versions | the actual output of a run (**Tested upstream versions**, a job's `Successfully installed` line), with its run URL and date |
+
+A driver's `main`, an open release PR or a project-level PyPI `info.version`
+never proves an installable release, and a lookup that fails is "not
+verified", never "unpublished" or "unchanged".
+
+The documentation maintainer refreshes these statements after reviewing release
+evidence: when a driver release is published, or when a release-verification
+run shows that a changed combination was installed. Then:
+
+1. Add a row to "Published package requirements" for the new artifact (wheel
+   filename, its SHA-256 checked against PyPI, the declared requirement, the
+   date). `make check-docs` rejects a row without that evidence, and any row
+   for a `main`, candidate or unverified version.
+2. Review only the current-facing statements that release changed, and leave
+   dated records as they are: a dated record is replaced or extended only with
+   a later run's actual output, never with versions no run installed.
+3. When no new run is available yet, say so next to the affected statement
+   ("refresh pending: <release>, not yet tested here") instead of letting the
+   old text read as current. A stale advisory statement never makes a
+   successful package publication count as failed.
+
 #### Excluded from golden verification
 
 Some examples are **intentionally** outside `make verify`. They are still real,
@@ -623,6 +944,10 @@ and not missing coverage:
 | `performance/bulk-insert/benchmark.py` | Throughput benchmark — prints wall-clock timings and rows/sec that vary run-to-run. |
 | `performance/connection-pooling/benchmark.py` | Throughput benchmark — timings and speedup factors are nondeterministic. |
 | `performance/fetch-optimization/benchmark.py` | Throughput benchmark — per-strategy timings are nondeterministic. |
+
+The three benchmarks are checked live by `make verify-performance` instead (see
+[Performance and migration lane](#performance-and-migration-lane)), which parses their output without
+comparing timings.
 
 Where output is dynamic only in *presentation* (timings, absolute paths, peak
 memory), prefer adding a presentation-only rule to `scripts/normalize_output.sh`
@@ -647,10 +972,95 @@ is built from the repository docs; the repository files stay the source of truth
   `make docs` on every PR (`Docs site build (strict)`).
 - `docs/internal/` (planning material such as the PRD) is excluded from the
   rendered site and its search index.
-- `docs/quickstart.md` is a hand-maintained site guide condensed from
-  `GETTING_STARTED.md`, which remains the source of truth. When a change to
-  `GETTING_STARTED.md` affects its commands or steps, update
-  `docs/quickstart.md` in the same PR.
+- `docs/quickstart.md` is a hand-maintained compatibility page (#392): its
+  headings keep old links working and point to the tutorial or to
+  `GETTING_STARTED.md`, and it holds the recorded walkthroughs. It repeats no
+  commands, so a change to `GETTING_STARTED.md` needs no copy there; update it
+  only when a heading it points to is renamed.
+
+### Documentation structure
+
+The site has one beginner route and separate pages for tasks, reference and help
+(#392). This map records, for each affected page, its source of truth, its site
+page, its reader and question, and the decision for it. Edit only the source: the
+staged copies under `docs/` are generated by `scripts/stage_docs.py` and ignored
+by git. Korean pages under `docs/ko/` are authored there.
+
+| Source | Site page | Reader and question | Decision | Before / after it |
+|---|---|---|---|---|
+| `quickstart/first-cubrid/README.md` | `first-cubrid/` | Newcomer: where do I start, and how do I prepare the lab? | The single beginner landing and lesson 1 (preparation). Steps 3 to 5 become lessons; every existing heading stays, so old links still land. | none / `first-cubrid-first-query/` |
+| `quickstart/first-cubrid/first-query.md` | `first-cubrid-first-query/` | Newcomer: how do I connect and read one row? | Lesson 2 (`01_first_query.py`, unchanged). | lesson 1 / lesson 3 |
+| `quickstart/first-cubrid/save-a-row.md` | `first-cubrid-save-a-row/` | Newcomer: how do I save rows and see them from another connection? | Lesson 3, split from step 4 (`02_save_and_verify.py`, unchanged). | lesson 2 / lesson 4 |
+| `quickstart/first-cubrid/rollback.md` | `first-cubrid-rollback/` | Newcomer: what does `rollback()` discard? | Lesson 4, split from step 4 (`03_rollback.py`, unchanged). | lesson 3 / lesson 5 |
+| `quickstart/first-cubrid/finish.md` | `first-cubrid-finish/` | Newcomer: how do I clean up, recover and stop the lab safely? | Lesson 5, split from step 5 (`04_cleanup.py`, unchanged), with the ownership check, recovery and `down -v` warning. | lesson 4 / the next task |
+| `GETTING_STARTED.md` | `getting-started/` | Returning user: which path (driver, ORM, MCP), how do I verify a checkout, how do I recover an old lab? | Keep; How-to guide "Choose a path and verify a checkout", with a pointer for newcomers to the tutorial. | any page |
+| `docs/quickstart.md` (authored) | `quickstart/` | Old links to the condensed copy of `GETTING_STARTED.md`; the recorded walkthroughs | Compatibility page: every old heading stays and points to the tutorial or to `getting-started/`; the recorded walkthroughs stay. How-to guide "Watch recorded walkthroughs". | any page |
+| `quickstart/5min-fastapi/README.md`, `quickstart/5min-sqlalchemy/README.md` | `quickstart-fastapi/`, `quickstart-sqlalchemy/` | User with a framework goal | Keep, labelled as optional goals after the tutorial; the #386 instructions are not changed. | the tutorial / the templates |
+| `docs/ko/first-cubrid.md`, `docs/ko/first-cubrid-first-query.md`, `docs/ko/getting-started.md`, `docs/ko/quickstart-*.md`, `docs/README.ko.md` | `ko/...` | Korean reader: the same questions | Mirror each English page and its lesson position, in a peer 한국어 group with the same order (moved from Project / Translations). | as in English |
+| `README.md` | `catalog/` | Anyone: what is in this repository? | Keep; its start link already points to the landing. | — |
+| `docs/index.md` | site home | Anyone: what is this site, where do I start? | Keep; one "Start here" link to the landing, and the path table links `getting-started/`. | — / the landing |
+| `fundamentals/**/README.md`, `performance/`, `pitfalls/`, `templates/**` | `fundamentals*/`, `performance/`, `pitfalls/`, `template-*/` | User with a task | Keep as How-to guides. | any page |
+| `SUPPORT_MATRIX.md`, `KNOWN_ISSUES.md` | `support-matrix/`, `known-issues/` | User looking up support or a known problem | Keep in Reference and Help (Help also links the issue forms and `SECURITY.md`). | any page |
+
+#### Writing a tutorial lesson
+
+Keep one beginner route: a new learning page joins the tutorial's lesson
+sequence instead of starting another "Start here" page, and a task, reference or
+recovery page links into the route instead of repeating it. Give each lesson:
+
+1. **Goal**: one or two sentences and the lesson it follows.
+2. **Before you start**: what earlier lessons must have produced (a printed
+   checkpoint, a table, an active virtual environment); never an open Python
+   session.
+3. **The program and the command**: a named file in the repository and the
+   command that runs it.
+4. **Checkpoint**: the exact output, backed by the script's `expected/` golden.
+5. **Explanation**: what the new calls did, with the warning that applies (for
+   example, local-only credentials) beside it.
+6. **Next step**: a link to the next lesson.
+
+Put readiness, ownership and cleanup mechanics in the preparation or finish
+lesson, keep their safety checks visible, and keep the Korean page in the same
+position with the same code and output. Lesson sources live next to their
+scripts and are staged; the Korean pages link the English page by its site URL.
+
+### Documentation checks
+
+Each documentation check has one job (#353):
+
+| Check | What it enforces | Blocking |
+|-------|------------------|----------|
+| `docs-sync` (`scripts/check_docs_sync.py`) | every example directory is listed in `README.md` and `llms.txt`; smoke coverage | listing yes, coverage warns |
+| `docs-site` (`make docs`) | links of the staged pages and of `docs/` resolve on the built site (`mkdocs build --strict`) | yes |
+| `docs-check` (`make docs-check`, `scripts/check_docs_links.py`) | deterministic defects in every tracked Markdown file, offline | yes |
+| `doc-lint` (organization workflow) | style, Mermaid and external links | advisory |
+
+`docs-check` reports, for every tracked Markdown file:
+
+- a relative link or image that does not exist, or an `#anchor` that is not a
+  heading of its target. A `docs/` link to a staged page (`support-matrix.md`)
+  resolves to its source (`SUPPORT_MATRIX.md`);
+- an undefined `[text][label]` reference and an unclosed code fence;
+- a paragraph line that starts with `#` and a digit on a page the site renders
+  (`docs/` outside `docs/internal/`, and the staged sources); write `\#750`;
+- a `make` goal that the Makefile does not define, and a `scripts/...` path
+  that does not exist;
+- a recipe command whose file is missing: the file of `pip install -r <file>`,
+  `python <file>.py` or `uvicorn <module>:<app>`. It is looked up next to the
+  Markdown file, at the repository root, and in each directory the file `cd`s
+  into. Placeholders such as `python <file>.py` are skipped.
+
+`CHANGELOG.md` keeps the commands of its time, so only its links are checked.
+The job runs on every pull request, including rename- and delete-only ones that
+touch no Markdown, and it never runs live CUBRID or golden suites.
+
+A reviewed exception goes in `scripts/docs-check-allowlist.txt` as
+`PATH TEXT  # reason`: it suppresses the findings of `PATH` whose message
+contains `TEXT`. The reason is required, an entry that suppresses nothing
+fails the check, and `scripts/` is maintainer-owned in CODEOWNERS, so every
+entry gets a maintainer's review. Inline `<!-- docs-check: ignore -->` markers
+are not honoured here, and nothing in a pull request body bypasses the check.
+Prefer fixing the link or command.
 
 ---
 
@@ -740,21 +1150,27 @@ pinning the caller alone does not freeze those resources.
 
 ### Review Process
 
-- All PRs must complete the applicable AGENTS.md development-tool review route
-  before merge. Non-trivial OpenCode work records Oracle pre/post evidence;
-  trivial OpenCode edits may omit those reviews with a recorded reason.
-  Standalone Claude Code, Codex, ChatGPT and other agent tools require a
-  substantive submitted GitHub Copilot review or another person's review.
-  A pending request does not complete the route. Human contributions follow
-  ordinary review, and outstanding review threads need a disposition.
-- CI must pass (lint checks).
-- Examples must be tested against a live CUBRID instance.
+- The review process is identical for people and all coding agents.
+  Required GitHub CI and relevant live CUBRID validation must pass.
+- Review correctness, tests, security, maintainability and scope.
+  AI review outputs are optional references, not mandatory approvals.
+- Maintainers verify the final code, document blocking findings and
+  make merge decisions. Changes to write-capable workflows, shared
+  release verification (`smoke-test.yml`) or release smoke scripts
+  require explicit independent security/invariant assessment.
+- Outside contributors do not need internal AI tooling, label rights
+  or database access. Maintainers arrange applicable hosted CI/lab checks.
 
-Explain unavailable local checks so maintainers can arrange validation. A reason
-or an AI review does not waive the CI or live checks required before merge.
-Outside contributors do not need internal AI tools, label permissions or live
-CUBRID access; when a required integration check is missing, maintainers own
-running it.
+### Agent-review evidence gate
+
+`agent-review` is a non-blocking diagnostic of submitted review records.
+Its current script may describe legacy tool-dependent evidence; that
+classification is **not** the project's acceptance or merge policy.
+Reviewers can use its findings as context, but GitHub's required CI
+and the responsible maintainer's independent judgment decide readiness.
+A PR may spoof GitHub Actions checks of the same name, so this advisory
+check must not be added to required branch status checks.
+Retain safe read-only fork-workflow handling and maintainer run approvals.
 
 ### Code ownership
 
@@ -764,7 +1180,7 @@ surfaces to the maintainers: `.github/workflows/` (including the reusable
 `.github/actions/`, `.github/dependabot.yml`, `.github/CODEOWNERS`, `SECURITY.md`,
 and the shared validation and golden-output infrastructure (`Makefile`,
 `scripts/`, the shared tests in `tests/`, `docker-compose.yml`, `pyproject.toml`).
-Individual recipes, and recipe-specific tests such as `tests/test_ai_agent*.py`,
+Individual recipes, and recipe-specific tests such as `templates/ai-agent/tests/test_*.py`,
 are intentionally not owned, so ordinary recipe contributions need no special
 reviewer. CODEOWNERS is routing only, not a security boundary, and does not by
 itself make any approval mandatory.
@@ -787,6 +1203,10 @@ maintainer decision recorded on an issue, not a pull request:
   individual lanes, including `Smoke Tests (CUBRID 11.2)` and
   `Smoke Tests (CUBRID 11.4)`, are not required checks themselves. A lane that
   the classifier did not select never blocks a merge.
+- **The `agent-review` check is advisory and not a required check.** A pull
+  request can publish a check with the same name (see
+  [Agent-review evidence gate](#agent-review-evidence-gate)), so it must not be
+  added to the ruleset until #378 is resolved.
 - **No required human approval and no required code-owner approval.** The
   project has a small maintainer team. A mandatory approval would block a
   maintainer's own pull request whenever the other maintainers are away, and
@@ -836,10 +1256,19 @@ code, later comments are checked; and after a raw-text element name such as
 are always checked. External contributors do not need to install internal agent
 tools or create duplicate work.
 
+### Good first issues and contribution claims
+
+An unassigned `good first issue` is open to **human-led contributors**, including people who direct and review AI-assisted work. They can start and submit a PR **without prior maintainer approval, GitHub Assignee access, or internal AI tooling**.
+
+Before beginning, check the issue's Assignees, comments and open PRs. A brief comment expressing interest helps avoid duplicate work but is optional; it is not a permission gate or an exclusive claim. If someone already owns the issue or is preparing a PR, coordinate first. Maintainers handle issue assignments and labels, including requests from contributors who cannot self-assign.
+
+**Maintainer-operated autonomous agents** are distinct from human-directed AI assistance. Before an autonomous agent implements a newcomer-reserved `good first issue`, a maintainer must authorize **that specific issue** and assign its implementer. Broad backlog/release instructions are insufficient.
+
+Existing tests, docs requirements and PR review/merge policies remain unchanged.
+
 ## Pull request and commit titles
 
-This rule covers issue titles, pull request titles and commit subjects in every
-cubrid-lab repository. Pull requests are squash-merged and the pull request
+This section covers pull request titles and commit subjects. Issue titles use type-only prefixes, as defined in the [organization standard](https://github.com/cubrid-lab/.github/blob/main/docs/ISSUE_PR_COMMIT_STANDARD.md). Pull requests are squash-merged and the pull request
 title becomes the commit title on `main`, so the pull request title is the one
 that must be right. The `PR title` check enforces it.
 
@@ -913,8 +1342,7 @@ When reporting a bug in an example, please include:
 
 For new example requests, describe the use case and framework.
 
-Issue titles follow [Pull request and commit titles](#pull-request-and-commit-titles):
-keep the prefilled `fix:` (bug report) or `feat:` (example request) prefix.
+Issue titles use type-only prefixes: `bug:` for a bug report and `feat:` for a feature request, without a module scope.
 
 Describe urgency and the expected scope when useful. Maintainers or triagers
 assign/create the canonical `priority:` and `size:` GitHub labels; reporters do

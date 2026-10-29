@@ -1,11 +1,15 @@
 services:
   cubrid:
     image: cubrid/cubrid:11.4
-    container_name: cubrid-dashboard
     ports:
-      - "33000:33000"
+      # The lab `dba` account has no password: publish the broker on this host only.
+      - "127.0.0.1:33000:33000"
     environment:
       CUBRID_DB: testdb
+      # The image registers the database for this host in databases.txt on the
+      # volume; without it the host is the container's random host name, which a
+      # recreated container no longer resolves (-353).
+      CUBRID_DB_HOST: localhost
     healthcheck:
       test: ["CMD", "csql", "-u", "dba", "testdb", "-c", "SELECT 1"]
       interval: 10s
@@ -13,7 +17,11 @@ services:
       retries: 10
       start_period: 30s
     volumes:
+      # Named volumes keep the database across `docker compose down`; only
+      # `docker compose down -v` deletes it. Images up to 11.3 keep databases in
+      # /var/lib/cubrid, the 11.4 image in /home/cubrid/CUBRID/databases.
       - cubrid_data:/var/lib/cubrid
+      - cubrid_databases:/home/cubrid/CUBRID/databases
 
   dashboard:
     # Installs the pinned requirements on start (no build step) so the
@@ -31,11 +39,13 @@ services:
                --server.address=0.0.0.0 --server.port=8501
                --browser.gatherUsageStats=false"
     ports:
-      - "8501:8501"
+      # Reachable from this host's browser only; DASHBOARD_HOST_IP=0.0.0.0 exposes it.
+      - "${DASHBOARD_HOST_IP:-127.0.0.1}:8501:8501"
     depends_on:
       cubrid:
         condition: service_healthy
 
 volumes:
   cubrid_data:
+  cubrid_databases:
   pip_cache:

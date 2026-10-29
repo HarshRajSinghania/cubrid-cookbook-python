@@ -84,10 +84,100 @@ class RewriteTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(text, source)
 
+    # --- #362: reference definitions, the footnote guard, and fence edges ---
+
+    def test_reference_definition_to_a_staged_source_is_rewritten(self) -> None:
+        text, errors = self.rewrite("[guide]: SUPPORT_MATRIX.md#top\nread [guide][] now\n")
+        self.assertEqual(errors, [])
+        self.assertEqual(text, "[guide]: support-matrix.md#top\nread [guide][] now\n")
+
+    def test_broken_reference_definition_is_reported_once_and_left_intact(self) -> None:
+        source = "[gone]: templates/error-handling/README.md\n"
+        text, errors = self.rewrite(source)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("points to missing 'templates/error-handling/README.md'", errors[0])
+        self.assertEqual(text, source)
+
+    def test_footnote_definition_is_neither_rewritten_nor_reported(self) -> None:
+        # REF_DEF_RE excludes `[^x]:`, so a footnote label is never mistaken for a
+        # link reference definition: neither target is resolved against the repo.
+        source = "[^1]: templates/error-handling/README.md\n[^2]: SUPPORT_MATRIX.md\n"
+        text, errors = self.rewrite(source)
+        self.assertEqual(errors, [])
+        self.assertEqual(text, source)
+
+    def test_double_backtick_span_hiding_a_broken_link_is_preserved(self) -> None:
+        # CODE_SPAN_RE opens on the whole run of backticks, so an inner link in a
+        # double-backtick span is masked rather than rewritten or reported.
+        source = "Run ``[gone](templates/error-handling/README.md)`` first.\n"
+        text, errors = self.rewrite(source)
+        self.assertEqual(errors, [])
+        self.assertEqual(text, source)
+
+    def test_tilde_fence_closes_only_on_its_own_marker(self) -> None:
+        # A backtick line inside a tilde fence stays hidden, and the next real
+        # `~~~` ends the block — proven by the link after it being rewritten.
+        source = (
+            "~~~markdown\n"
+            "[gone](templates/error-handling/README.md)\n"
+            "```\n"
+            "[also-gone](templates/error-handling/README.md)\n"
+            "~~~\n"
+            "[m](SUPPORT_MATRIX.md)\n"
+        )
+        text, errors = self.rewrite(source)
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            text,
+            "~~~markdown\n"
+            "[gone](templates/error-handling/README.md)\n"
+            "```\n"
+            "[also-gone](templates/error-handling/README.md)\n"
+            "~~~\n"
+            "[m](support-matrix.md)\n",
+        )
+
     def test_missing_target_is_reported(self) -> None:
         _, errors = self.rewrite("[gone](templates/error-handling/)\n")
         self.assertEqual(len(errors), 1)
         self.assertIn("templates/error-handling", errors[0])
+
+    def test_link_leaving_repository_is_reported_and_left_intact(self) -> None:
+        for target in ("../outside.md", ".."):
+            source = f"[x]({target})\n"
+            text, errors = self.rewrite(source)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("leaves the repository", errors[0])
+            self.assertEqual(text, source)
+
+    def test_repository_root_link_becomes_main_tree_url(self) -> None:
+        tree_url = f"{GITHUB_BASE}/tree/main"
+        text, errors = self.rewrite("[x](.)\n[y](./)\n[z](./#top)\n")
+        self.assertEqual(errors, [])
+        self.assertEqual(text, f"[x]({tree_url})\n[y]({tree_url})\n[z]({tree_url}#top)\n")
+
+    def test_query_only_target_is_returned_unchanged(self) -> None:
+        source = "[x](?raw=1)\n"
+        text, errors = self.rewrite(source)
+        self.assertEqual(errors, [])
+        self.assertEqual(text, source)
+
+    def test_query_and_fragment_after_a_staged_file_keep_their_order(self) -> None:
+        # A target with both delimiters must split at the first one, otherwise
+        # the query stays in the path and the existence check fails (#361).
+        text, errors = self.rewrite("[m](SUPPORT_MATRIX.md?view=raw#versions)\n")
+        self.assertEqual(errors, [])
+        self.assertEqual(text, "[m](support-matrix.md?view=raw#versions)\n")
+
+    def test_query_and_fragment_after_a_directory_keep_their_order(self) -> None:
+        text, errors = self.rewrite("[p](pitfalls/?v=2#top)\n")
+        self.assertEqual(errors, [])
+        self.assertEqual(text, "[p](pitfalls.md?v=2#top)\n")
+
+    def test_missing_target_with_query_and_fragment_is_still_reported(self) -> None:
+        _, errors = self.rewrite("[gone](templates/error-handling/?v=2#top)\n")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("points to missing 'templates/error-handling'", errors[0])
 
     def test_stage_writes_pages_without_touching_sources(self) -> None:
         readme = _write(self.root, "README.md", "[m](SUPPORT_MATRIX.md)\n")

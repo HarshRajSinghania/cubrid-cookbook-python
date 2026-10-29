@@ -4,9 +4,10 @@ name: CI
 # start only when selected and ci-gate accepts a skip only where the classifier
 # said "false". Pull requests: cheap checks always, then only the touched recipe
 # families on CUBRID 11.4 / Python 3.12. Push, the weekly schedule and manual
-# runs: Python 3.11-3.14 and CQRS on 11.2 + 11.4 (schedule and manual runs also
-# the exact driver floors, #241); smoke-test.yml owns the broad
-# 11.2/11.4 goldens and recipe suites there. See CONTRIBUTING.md "CI tiers".
+# runs: Python 3.11-3.14 and pinned CQRS, on 11.4 for a push and on 11.2 + 11.4
+# for the schedule and manual runs (#480; they also run the exact driver floors,
+# #241); smoke-test.yml owns the broad goldens and recipe suites there. See
+# CONTRIBUTING.md "CI tiers".
 on:
   pull_request:
   push:
@@ -46,6 +47,7 @@ jobs:
       smoke_114: ${{ steps.scope.outputs.smoke_114 }}
       smoke_112: ${{ steps.scope.outputs.smoke_112 }}
       verify_paths: ${{ steps.scope.outputs.verify_paths }}
+      smoke_lanes: ${{ steps.scope.outputs.smoke_lanes }}
       floors: ${{ steps.scope.outputs.floors }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -88,11 +90,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Set up uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.12"
           version: "0.12.17"
@@ -116,11 +118,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Set up uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.12"
           version: "0.12.17"
@@ -132,7 +134,8 @@ jobs:
           uv pip install --system -r quickstart/5min-fastapi/requirements.txt pytest httpx sqlalchemy ruff==0.16.4
           uv pip freeze --system
       - name: Run the contributor checks without a database
-        run: make check
+        # make check is the non-test quality gate; make test runs the offline suites.
+        run: make check test
 
   docs-sync:
     name: Docs sync gate
@@ -142,7 +145,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Run doctests
@@ -165,11 +168,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Set up uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.12"
           version: "0.12.17"
@@ -181,6 +184,41 @@ jobs:
           uv pip install --system -r .github/requirements-docs.txt
           uv pip freeze --system
       - run: make docs
+
+  # Deterministic documentation defects block the merge (#353); the shared
+  # doc-lint below stays advisory for style. Local links and anchors (a docs/
+  # link to a staged page resolves to its source), undefined references,
+  # unclosed fences, `make` goals, scripts/ paths, and the requirements files,
+  # scripts and uvicorn modules that recipe commands name. Offline: external
+  # links are never fetched. Always on, like docs-site: a rename- or delete-only
+  # pull request touches no Markdown but can strand a README.
+  docs-check:
+    name: Documentation links and recipe commands
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: "3.12"
+          version: "0.12.17"
+          enable-cache: true
+          cache-dependency-glob: ".github/requirements-docs-check.txt"
+          cache-suffix: ${{ github.job }}
+      - name: Install the pinned check tools
+        run: |
+          uv pip install --system -r .github/requirements-docs-check.txt
+          uv pip freeze --system
+      - name: Test the checker
+        run: python -m pytest tests/test_check_docs_links.py -q
+      - name: Check links, anchors, fences and recipe commands
+        run: python scripts/check_docs_links.py
 
   doc-lint:
     name: Documentation lint
@@ -194,8 +232,9 @@ jobs:
       exclude: "node_modules/,typescript/node_modules/,vendor/"
       fail-on-issue: false  # advisory mode during initial rollout
 
-  # `make verify` is golden-file only and never runs the pytest suites, so
-  # recipe-level CUBRID-only breakage ships undetected (#131/#127). This job
+  # The PR smoke lanes' `make verify-goldens` compares golden files only and
+  # never runs these pytest suites, so recipe-level CUBRID-only breakage would
+  # ship undetected (#131/#127). This job
   # runs the Flask/FastAPI suites ci_scope.py selects (web_suites, #227) against
   # one live CUBRID 11.4: the changed recipes (up to MAX_WEB_SUITES), plus the
   # representative suites for shared Flask/FastAPI files and wider tiers.
@@ -226,11 +265,11 @@ jobs:
         with:
           # Runs PR recipe code: never persist the token.
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Set up uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: "3.12"
           version: "0.12.17"
@@ -405,8 +444,9 @@ jobs:
         python fundamentals/sqlalchemy/01_connect_and_session.py | bash scripts/normalize_output.sh | diff -u fundamentals/sqlalchemy/expected/01_connect_and_session.expected -
 
   # Recipe 10 has independent pins that broad latest-package smoke cannot validate.
-  # 11.2 + 11.4 on push/schedule/dispatch and when its pins or shared live
-  # infrastructure change; 11.4 for other recipe-10 PRs; skipped otherwise.
+  # 11.2 + 11.4 on the weekly schedule, manual runs and when its pins or shared
+  # live infrastructure change; 11.4 on a push to main (#480) and for other
+  # recipe-10 PRs; skipped otherwise.
   cqrs-pinned-pytest:
     name: CQRS pinned requirements (CUBRID ${{ matrix.cubrid }})
     needs: [classify]
@@ -456,7 +496,7 @@ jobs:
         with:
           # Runs PR example code: never persist the token.
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Install each documented floor and run its goldens
@@ -483,13 +523,54 @@ jobs:
         with:
           # make verify runs untrusted PR example code: never persist the token.
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: ./.github/actions/pr-smoke
         with:
           cubrid-version: "11.4"
           verify-paths: ${{ needs.classify.outputs.verify_paths }}
+          live-lanes: ${{ needs.classify.outputs.smoke_lanes }}
+      - name: Collect CUBRID logs
+        # Container and server logs of the smoke action's CUBRID containers,
+        # uploaded with the test results; only after a failure.
+        if: failure()
+        continue-on-error: true
+        run: |
+          mkdir -p test-results/cubrid-logs
+          for name in cubrid cubrid-live; do
+            docker inspect "$name" >/dev/null 2>&1 || continue
+            docker logs "$name" > "test-results/cubrid-logs/$name.log" 2>&1 || true
+            docker exec "$name" bash -lc 'tar -C "$CUBRID" -czf - log' \
+              > "test-results/cubrid-logs/$name-server-log.tgz" 2>/dev/null || true
+          done
+      - name: Publish the live verification summary
+        # test-results/verify/summary.md is summary.json (scripts/live_gate.py,
+        # #462) as one table: every lane the smoke action ran, on success and failure.
+        if: always()
+        run: |
+          if [ -f test-results/verify/summary.md ]; then
+            cat test-results/verify/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Live verification: no live lane wrote test-results/verify/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload live evidence
+        # test-results/ (summary.json, environment.json, JUnit, logs, CUBRID logs
+        # after a failure) and the .live-evidence/ compatibility layout of the
+        # make verify-* lanes the smoke action ran; evidence only, so an upload
+        # failure never fails the lane.
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: live-evidence-pr-cubrid-11.4
+          path: |
+            test-results/
+            .live-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          overwrite: true
 
   smoke-112:
     name: Smoke Tests (CUBRID 11.2)
@@ -503,13 +584,54 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - uses: ./.github/actions/pr-smoke
         with:
           cubrid-version: "11.2"
           verify-paths: ${{ needs.classify.outputs.verify_paths }}
+          live-lanes: ${{ needs.classify.outputs.smoke_lanes }}
+      - name: Collect CUBRID logs
+        # Container and server logs of the smoke action's CUBRID containers,
+        # uploaded with the test results; only after a failure.
+        if: failure()
+        continue-on-error: true
+        run: |
+          mkdir -p test-results/cubrid-logs
+          for name in cubrid cubrid-live; do
+            docker inspect "$name" >/dev/null 2>&1 || continue
+            docker logs "$name" > "test-results/cubrid-logs/$name.log" 2>&1 || true
+            docker exec "$name" bash -lc 'tar -C "$CUBRID" -czf - log' \
+              > "test-results/cubrid-logs/$name-server-log.tgz" 2>/dev/null || true
+          done
+      - name: Publish the live verification summary
+        # test-results/verify/summary.md is summary.json (scripts/live_gate.py,
+        # #462) as one table: every lane the smoke action ran, on success and failure.
+        if: always()
+        run: |
+          if [ -f test-results/verify/summary.md ]; then
+            cat test-results/verify/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Live verification: no live lane wrote test-results/verify/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload live evidence
+        # test-results/ (summary.json, environment.json, JUnit, logs, CUBRID logs
+        # after a failure) and the .live-evidence/ compatibility layout of the
+        # make verify-* lanes the smoke action ran; evidence only, so an upload
+        # failure never fails the lane.
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: live-evidence-pr-cubrid-11.2
+          path: |
+            test-results/
+            .live-evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          overwrite: true
 
   # Advisory only (#239), never part of ci-gate: the weekly schedule also runs
   # representative goldens against pycubrid and sqlalchemy-cubrid `main`
@@ -533,7 +655,7 @@ jobs:
   ci-gate:
     name: CI Gate (all checks must pass)
     if: always()
-    needs: [classify, lint-python, quickstart-tests, docs-sync, docs-site, doc-lint, pytest-suites, dashboard-pytest, async-worker-pytest, django-bridge-pytest, python-compatibility, cqrs-pinned-pytest, driver-floors, smoke-114, smoke-112]
+    needs: [classify, lint-python, quickstart-tests, docs-sync, docs-site, docs-check, doc-lint, pytest-suites, dashboard-pytest, async-worker-pytest, django-bridge-pytest, python-compatibility, cqrs-pinned-pytest, driver-floors, smoke-114, smoke-112]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -545,6 +667,7 @@ jobs:
           R_LINT_PYTHON: ${{ needs.lint-python.result }}
           R_QUICKSTART_TESTS: ${{ needs.quickstart-tests.result }}
           R_DOCS_SYNC: ${{ needs.docs-sync.result }}
+          R_DOCS_CHECK: ${{ needs.docs-check.result }}
           R_DOC_LINT: ${{ needs.doc-lint.result }}
           R_DOCS_SITE: ${{ needs.docs-site.result }}
           R_PYTEST_SUITES: ${{ needs.pytest-suites.result }}
@@ -568,7 +691,7 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for var in R_CLASSIFY R_LINT_PYTHON R_QUICKSTART_TESTS R_DOCS_SYNC R_DOC_LINT R_DOCS_SITE R_PYTEST_SUITES R_DASHBOARD_PYTEST R_ASYNC_WORKER_PYTEST R_DJANGO_BRIDGE_PYTEST R_PYTHON_COMPATIBILITY R_CQRS_PINNED_PYTEST R_DRIVER_FLOORS R_SMOKE_114 R_SMOKE_112; do
+          for var in R_CLASSIFY R_LINT_PYTHON R_QUICKSTART_TESTS R_DOCS_SYNC R_DOCS_CHECK R_DOC_LINT R_DOCS_SITE R_PYTEST_SUITES R_DASHBOARD_PYTEST R_ASYNC_WORKER_PYTEST R_DJANGO_BRIDGE_PYTEST R_PYTHON_COMPATIBILITY R_CQRS_PINNED_PYTEST R_DRIVER_FLOORS R_SMOKE_114 R_SMOKE_112; do
             result="${!var:-}"
             wanted_var="W_${var#R_}"
             # Lanes without a W_ variable are always required.

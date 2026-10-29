@@ -342,7 +342,6 @@ class RunnerAggregationTests(unittest.TestCase):
         self.assertNotIn("junit", listed.stdout)
 
 
-
 class SuiteEntryTests(unittest.TestCase):
     """Direct unit tests for the previously uncovered branches of report_results.suite_entry()."""
 

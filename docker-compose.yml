@@ -1,11 +1,17 @@
 services:
   cubrid:
     image: cubrid/cubrid:${CUBRID_VERSION:-11.2}
-    container_name: cubrid-cookbook
     ports:
-      - "33000:33000"
+      # local-only: the lab's dba account has no password. CUBRID_TEST_PORT moves
+      # the published port; the examples and their goldens still connect to 33000.
+      - "127.0.0.1:${CUBRID_TEST_PORT:-33000}:33000"
     environment:
       CUBRID_DB: testdb
+      # The image registers the database for this host in databases.txt on the
+      # volume. Without it the host is the creating container's random host name,
+      # which a recreated container (after `docker compose down`) no longer
+      # resolves (-353). No fixed container_name or hostname is needed.
+      CUBRID_DB_HOST: localhost
     healthcheck:
       test: ["CMD", "csql", "-u", "dba", "testdb", "-c", "SELECT 1"]
       interval: 10s
@@ -13,7 +19,13 @@ services:
       retries: 10
       start_period: 30s
     volumes:
+      # Named volumes keep the database across `make docker-down` (`docker compose
+      # down`); only `make docker-clean` (`docker compose down -v`) deletes it.
+      # Images up to 11.3 keep databases in /var/lib/cubrid, the 11.4 image in
+      # /home/cubrid/CUBRID/databases.
       - cubrid_data:/var/lib/cubrid
+      - cubrid_databases:/home/cubrid/CUBRID/databases
 
 volumes:
   cubrid_data:
+  cubrid_databases:

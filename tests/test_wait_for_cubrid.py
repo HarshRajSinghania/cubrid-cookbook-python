@@ -22,15 +22,15 @@ class ReadinessCommandTests(unittest.TestCase):
         self.assertIn("image: cubrid/cubrid:${CUBRID_VERSION:-11.2}", compose)
         support = (ROOT / "SUPPORT_MATRIX.md").read_text(encoding="utf-8")
         instructions = support.split("## How to Test Against a Specific Version", 1)[1]
-        self.assertIn("make down", instructions)
-        self.assertIn("CUBRID_VERSION=11.4 make up", instructions)
+        self.assertIn("make docker-down", instructions)
+        self.assertIn("CUBRID_VERSION=11.4 make docker-up", instructions)
         self.assertNotIn("sleep 60", instructions)
         self.assertNotIn("docker compose down -v", instructions)
         contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-        self.assertIn("CUBRID_VERSION=11.4 make up", contributing)
+        self.assertIn("CUBRID_VERSION=11.4 make docker-up", contributing)
         self.assertIn("UP_TIMEOUT", contributing)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
-        down = makefile.split("\ndown:", 1)[1].split("\n\n", 1)[0]
+        down = makefile.split("\ndocker-down:", 1)[1].split("\n\n", 1)[0]
         self.assertIn("$(DOCKER_COMPOSE) down", down)
         self.assertNotIn("-v", down)
         self.assertNotIn("--volumes", down)
@@ -66,18 +66,28 @@ class ReadinessCommandTests(unittest.TestCase):
         )
         return shlex.join([sys.executable, str(self.compose)])
 
-    def wait(self, mode: str, *, timeout: str = str(WAIT_TIMEOUT)):
+    def wait(
+        self,
+        mode: str,
+        *,
+        timeout: str = str(WAIT_TIMEOUT),
+        probe_timeout: str = str(PROBE_TIMEOUT),
+        interval: str = "0.01",
+        compose: str | None = None,
+    ):
+        if compose is None:
+            compose = self.fake_compose(mode)
         command = [
             sys.executable,
             str(ROOT / "scripts/wait_for_cubrid.py"),
             "--compose",
-            self.fake_compose(mode),
+            compose,
             "--timeout",
             timeout,
             "--probe-timeout",
-            str(PROBE_TIMEOUT),
+            probe_timeout,
             "--interval",
-            "0.01",
+            interval,
         ]
         started = time.monotonic()
         outer_timeout = WAIT_TIMEOUT + 2 * PROBE_TIMEOUT + PROCESS_MARGIN
@@ -122,11 +132,36 @@ class ReadinessCommandTests(unittest.TestCase):
                     self.assertIn("exit 7", result.stderr)
 
     def test_invalid_budget_does_not_run_compose(self) -> None:
-        for value in ("0", "-1", "nan", "inf"):
-            with self.subTest(value=value):
-                result = self.wait("success", timeout=value)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertFalse(self.log.exists())
+        for option in ("timeout", "probe_timeout", "interval"):
+            for value in ("0", "-1", "nan", "inf", "not-a-number"):
+                with self.subTest(option=option, value=value):
+                    result = self.wait("success", **{option: value})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"--{option.replace('_', '-')}", result.stderr)
+                    self.assertFalse(self.log.exists())
+
+    def test_missing_compose_executable_fails_fast_without_retrying(self) -> None:
+        missing = str(self.root / "nonexistent-compose")
+        started = time.monotonic()
+        result = self.wait("success", compose=missing)
+        self.assertLess(time.monotonic() - started, WAIT_TIMEOUT)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("CUBRID readiness failed", result.stderr)
+        self.assertIn("No such file", result.stderr)
+        self.assertIn("Compose ps diagnostics failed", result.stderr)
+        self.assertIn("Compose logs --tail 50 cubrid diagnostics failed", result.stderr)
+
+    def test_empty_compose_is_a_usage_error_and_runs_nothing(self) -> None:
+        result = self.wait("success", compose="")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--compose must name an executable", result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_unparsable_compose_is_a_usage_error_and_runs_nothing(self) -> None:
+        result = self.wait("success", compose='"unbalanced')
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("No closing quotation", result.stderr)
+        self.assertFalse(self.log.exists())
 
     def test_make_up_uses_the_bounded_helper(self) -> None:
         result = subprocess.run(

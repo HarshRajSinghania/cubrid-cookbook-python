@@ -25,6 +25,38 @@ It is intentionally lean: sync SQLAlchemy session lifecycle, clean repository pa
    - Swagger UI: `http://localhost:8000/docs`
    - Health: `http://localhost:8000/health`
 
+## What is published, and resetting the data
+
+Compose publishes the CUBRID broker (`127.0.0.1:33000`) and the API
+(`127.0.0.1:8000`) on this host only. The lab `dba` account has no password, so
+the broker is never published on other interfaces. To let other machines reach
+the API on purpose, set `API_HOST_IP` (for example
+`API_HOST_IP=0.0.0.0 docker compose up --build`, or a line in `.env`).
+
+The database lives in the named volumes `cubrid_data` and `cubrid_databases`.
+`docker compose down` keeps it; `docker compose down -v` deletes it, which resets
+the template to an empty database.
+
+## Upgrading a stack started from an earlier compose file
+
+CUBRID records the host name of the container that created the database. Earlier
+files gave the `cubrid` service no fixed host name (before #413) or the host name
+`cubrid-api-service`, and named the containers `cubrid-db` and `fastapi-service`.
+The current file sets `CUBRID_DB_HOST: localhost` and leaves the container names
+to Compose. It recreates the container but keeps the database in its volume, so
+the health check fails with `-353 Failed to connect to database server` and the
+API does not start. Point the database at `localhost` once, from this folder:
+
+```bash
+docker compose up -d cubrid
+docker compose exec -T -u cubrid cubrid sh -c 'sed -i -E "s/^(testdb[[:space:]]+[^[:space:]]+[[:space:]]+)[^[:space:]]+/\1localhost/" "$CUBRID_DATABASES/databases.txt"'
+docker compose restart cubrid
+docker compose up -d
+```
+
+If the data is disposable, run `docker compose down -v` and then
+`docker compose up --build` instead, to start with a fresh database.
+
 ## Project Structure
 
 ```text
